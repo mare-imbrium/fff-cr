@@ -1,0 +1,13 @@
+name: fff
+version: 0.1.0
+
+authors:
+  - kepler <githubkepler.50s@gishpuppy.com>
+
+targets:
+  fff:
+    main: src/fff.cr
+
+crystal: 0.28.0
+
+license: MIT
