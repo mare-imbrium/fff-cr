@@ -6,6 +6,7 @@ I am just learning Crystal, so this is just for learning.
 ## Installation
 
 TODO: Write installation instructions here
+HOW TO INSTALL CRYSTAL executable ?
 
 ## Usage
 
