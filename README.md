@@ -1,4 +1,4 @@
-# fff
+# fff-cr
 
 Crystal port of dylanaraps/fff : freakin fast file manager written in bash.
 I am just learning Crystal, so this is just for learning.
