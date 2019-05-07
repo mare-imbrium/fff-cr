@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-07 11:54
+#  Last update: 2019-05-07 16:27
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 require "readline"
@@ -84,9 +84,9 @@ module Fff
       @file_post       = ""
       @mark_pre        = ""
       @mark_post       = ""
-      @fff_ls_colors   = 0
+      @fff_ls_colors   = false
       @previous_index  = 0
-      @find_previous   = 0
+      @find_previous   = false
       @y               = 0
       # This hash contains colors for file patterns, updated from LS_COLORS
       @ls_pattern = {} of String => String
@@ -134,13 +134,13 @@ module Fff
       # '\e[1;Nr':   Limit scrolling to scrolling area.
       #              Also sets cursor to (0,0).
       # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
-      printf("\e[?1049h\e[?7l\e[?25h\e[2J\e[1;%sr", @max_items)
-
+      printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
       # Hide echoing of user input
       system("stty -echo")
     end
 
     def reset_terminal
+      @@log.debug " called reset terminal "
       # Reset the terminal to a useable state (undo all changes).
       # '\e[?7h':   Re-enable line wrapping.
       # '\e[?25h':  Unhide the cursor.
@@ -222,7 +222,7 @@ module Fff
       # as a separate variable.
       # Format: ':.ext=0;0:*.jpg=0;0;0:*png=0;0;0;0:'
       unless ENV["LS_COLORS"]?
-          @fff_ls_colors = 0
+          @fff_ls_colors = false
         return
       end
 
@@ -285,7 +285,7 @@ module Fff
       item_index = 0
 
       pwd = Dir.current
-      oldpwd = ENV["OLDPWD"]
+      #oldpwd = ENV["OLDPWD"] # WRONG
 
       # If '$PWD' is '/', unset it to avoid '//'.
       pwd = "" if pwd == "/"
@@ -298,13 +298,12 @@ module Fff
 
           # Find the position of the child directory in the
           # parent directory list.
-          @previous_index = item_index if item == oldpwd
+          @previous_index = item_index if item == @oldpwd
 
         else
           files.push item
         end
       end
-      # @list = dirs.as(Array(String)) + files.as(Array(String))
       @list = dirs + files
 
       # Indicate that the directory is empty.
@@ -312,7 +311,9 @@ module Fff
       @list.push "empty" if @list && @list.empty?
 
       @list_total = @list.size - 1
-      @@log.debug "read_dir: #{@list_total}"
+      # @@log.debug "read_dir: #{@list_total}, prev: #{@previous_index}"
+      # @@log.debug "read_dir: #{pwd},:: #{@oldpwd}"
+      # @@log.debug "read_dir: #{@list}"
       marked_files_clear
 
 
@@ -429,12 +430,12 @@ module Fff
 
       # When going up the directory tree, place the cursor on the position
       # of the previous directory.
-      if @find_previous == 1
+      if @find_previous
         scroll_start    = @previous_index - 1
         @scroll         = scroll_start
 
         # Clear the directory history. We're here now.
-        @find_previous = 0
+        @find_previous = false
       end
 
       # If current dir is near the top of the list, keep scroll position.
@@ -462,9 +463,9 @@ module Fff
         i = scroll_start
         while i < scroll_end
           print("\n") if i > scroll_start
-          @@log.debug " calling print_line with #{i}"
+          # @@log.debug " calling print_line with #{i}"
           print_line(i)
-          @@log.debug " after   print_line with #{i}"
+          # @@log.debug " after   print_line with #{i}"
           i += 1
         end
 
@@ -481,19 +482,19 @@ module Fff
       # Redraw the current window.
       # If 'full' is passed, re-fetch the directory list.
       if full
-        @@log.debug "inside redraw before read_dir"
+        # @@log.debug "inside redraw before read_dir"
         read_dir
-        @@log.debug "inside redraw after  read_dir"
+        # @@log.debug "inside redraw after  read_dir"
         @scroll = 0
       end
 
-      @@log.debug "inside redraw before clear_screen: #{@lines}, #{@max_items}"
+      # @@log.debug "inside redraw before clear_screen: #{@lines}, #{@max_items}"
       clear_screen
-        @@log.debug "inside redraw after  clear_screen"
+        # @@log.debug "inside redraw after  clear_screen"
       draw_dir
-        @@log.debug "inside redraw after  draw_dir"
+        # @@log.debug "inside redraw after  draw_dir"
       status_line
-        @@log.debug "inside redraw after  status_line"
+        # @@log.debug "inside redraw after  status_line"
     end
 
     def marked_files_clear
@@ -590,8 +591,9 @@ module Fff
 
     def open(file="/")
       if File.directory?(file)
-        @search = 0
-        @search_end_early = 0
+        @search = false
+        @search_end_early = false
+        @oldpwd = Dir.current
         Dir.cd file
         redraw true
       elsif File.file?(file)
@@ -602,8 +604,10 @@ module Fff
           clear_screen
           reset_terminal
           # "${VISUAL:-${EDITOR:-vi}}" "$1"
-          ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
-          `#{ed} #{file}`
+          # ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
+          ed = ENV["MANPAGER"]? || ENV["PAGER"]? || "less"
+          @@log.debug "ED: #{ed} #{file}"
+          system("#{ed} #{file}")
           setup_terminal
           redraw
         else
@@ -613,19 +617,19 @@ module Fff
                 # nohup "${FFF_OPENER:-${opener:-xdg-open}}" "$1" &>/dev/null &
                 # disown
                 op = @opener || "xdg-open"
-                `#{op} #{file}`
+                @@log.debug "OPEN: #{op} FILE: #{file}"
+                # `#{op} #{file}`
         end
-
       end
-
     end # open
+
     def cmd_line(str1, str2=nil)
       @cmd_reply = ""
 
     # '\e7':     Save cursor position.
     # '\e[?25h': Unhide the cursor.
     # '\e[%sH':  Move cursor to bottom (cmd_line).
-    print("\e7\e[%sH\e[?25h", @lines)
+      print("\e7\e[%sH\e[?25h", @lines)
 
     end
 
@@ -639,12 +643,15 @@ module Fff
         open @list[@scroll]
       when "LEFT", "h", "BACKSPACE"
         # If a search was done, clear the results and open the current dir.
-        if @search == 1 && @search_end_early != 1
+        if @search && @search_end_early != true
           open pwd
           # If '$PWD' is '/', do nothing.
         elsif pwd && pwd != "/"
-          @find_previous = 1
-          open File.expand_path("..")
+          @find_previous = true
+          dir =  File.expand_path("..")
+          @@log.debug " LEFT opening #{dir}"
+          @oldpwd = pwd
+          open dir
         end
       when "DOWN", "j"
         if @scroll < @list_total
@@ -702,9 +709,9 @@ module Fff
           @list = @cur_list
           @list_total = @list.size - 1
           redraw
-          @search = 0
+          @search = false
         else
-          @search = 1
+          @search = true
         end
 
         # spawn a shell TODO
@@ -749,6 +756,11 @@ module Fff
     end
 
     def main(argv)
+      Signal::INT.trap do
+        reset_terminal
+        exit
+      end
+      at_exit{ reset_terminal }
       get_os
       get_term_size
       # get_w3m_path
