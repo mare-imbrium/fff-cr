@@ -5,11 +5,12 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-07 16:27
+#  Last update: 2019-05-09 00:34
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 require "readline"
 require "logger"
+require "file_utils"
 
 module Fff
   VERSION = "0.1.0"
@@ -82,11 +83,14 @@ module Fff
       @file_flags      = "bIL"
       @file_pre        = ""
       @file_post       = ""
-      @mark_pre        = ""
-      @mark_post       = ""
+      @mark_pre        = nil
+      @mark_post       = nil
       @fff_ls_colors   = false
+      @fff_trash_command   = nil
+      @fff_trash       = ""
       @previous_index  = 0
       @find_previous   = false
+      @match_hidden    = false
       @y               = 0
       # This hash contains colors for file patterns, updated from LS_COLORS
       @ls_pattern = {} of String => String
@@ -113,6 +117,7 @@ module Fff
         @file_flags = "bIL"
         @@log.debug "ED: #{ENV["EDITOR"]?}"
         @@log.debug "PAGER: #{ENV["PAGER"]?}"
+        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "rmtrash"
         # puts "keys: #{ENV.keys.join("\n")}"
         # we will be moving to some dir, not using trash
       when "haiku"
@@ -120,6 +125,7 @@ module Fff
         # set trash command and dir
         # what the hell is this anyway
         @@log.debug "Haiku"
+        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "trash"
       else
         @@log.debug "Else shouldn't linux be taken care of ??"
         @@log.debug ostype
@@ -236,6 +242,7 @@ module Fff
       # Get a file's mime_type.
       flags = @file_flags || "biL"
       mime_type=`file "-#{flags}" #{file}`
+      mime_type
     end
 
     def status_line(filename=nil)
@@ -243,7 +250,7 @@ module Fff
 
       # in fff, file_program was an array with the command and params
       #  which was displayed with '*' and executed with '@' naturally.
-      mark_ui = "[#{@marked_files}.compact.size] selected (#{@file_program}) [p] ->"
+      mark_ui = "[#{@marked_files.compact.size}] selected (#{@file_program}) [p] ->"
 
       # Escape the directory string.
       # Remove all non-printable characters.
@@ -290,7 +297,18 @@ module Fff
       # If '$PWD' is '/', unset it to avoid '//'.
       pwd = "" if pwd == "/"
 
-      entries = Dir.glob(pwd + "/*")
+      @@log.debug "read_dir mh: #{@match_hidden}"
+      # entries = Dir.glob("*", match_hidden: @match_hidden)
+      entries = Dir.glob(pwd + "/*") #, match_hidden: false)
+      # WHY does fff use full filenames in listing?
+      # because when we move a file, we need full name
+      # entries = Dir.glob("*") #, match_hidden: false)
+
+      unless @match_hidden
+        # this will not work if full filenames
+        entries = entries.reject{|f| File.basename(f).starts_with?('.')}
+      end
+
       entries.each do |item|
         if File.directory?(item)
           dirs.push item
@@ -348,37 +366,37 @@ module Fff
       elsif ftype == "CharacterDevice"
         # Character special file.
         color = @ls_ftype[ftype]? || "\e[40;33;01m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
       elsif File.executable?(file)
         # Executable file.
         color = @ls_ftype["ex"]? || "\e[01;32m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
       elsif File.symlink?(file) && !File.exists?(file)
         # Symbolic Link (broken).
         color = @ls_ftype["mi"]? || "\e[01;31;7m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
       elsif File.symlink?(file)
         # Symbolic Link.
         color = @ls_ftype["Symlink"]? || "\e[01;36m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
         # Fifo file.
       elsif ftype == "Pipe"
         color = @ls_ftype[ftype]? || "\e[40;33m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
       elsif ftype == "Socket"
         # Socket file.
         color = @ls_ftype[ftype]? || "\e[01;35m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
         # NEED to decipher exactly what is happening here in fff
@@ -386,7 +404,7 @@ module Fff
       else
         # case of File or fi
         color = @ls_ftype[ftype]? || "\e[37m"
-        format = "\e[#{color}m"
+        # format = "\e[#{color}m"
         format = color
 
       end
@@ -482,7 +500,7 @@ module Fff
       # Redraw the current window.
       # If 'full' is passed, re-fetch the directory list.
       if full
-        # @@log.debug "inside redraw before read_dir"
+        @@log.debug "inside redraw before read_dir"
         read_dir
         # @@log.debug "inside redraw after  read_dir"
         @scroll = 0
@@ -540,20 +558,22 @@ module Fff
       end
 
       # Find the program to use.
-      case operation
-      when /yY/
-        @file_program = "cp -iR"
-      when /mM/
-        @file_program = "mv -i"
-      when /sS/
-        @file_program = "ln -s"
-
-        # These are 'fff' functions.
-      when /dD/
-        @file_program = "trash"
-      when /bB/
-        @file_program = "bulk_rename"
-      end
+      @file_program = case operation
+                      when /[yY]/
+                        "cp -iR"
+                      when /[mM]/
+                        "mv -i"
+                      when /[sS]/
+                        "ln -s"
+                        # These are 'fff' functions.
+                      when /[dD]/
+                        :trash
+                      when /[bB]/
+                        "bulk_rename"
+                      else
+                        ""
+                      end
+      @@log.debug "fileprogram is: #{@file_program}"
 
       status_line
     end
@@ -587,6 +607,34 @@ module Fff
         end
         return input
       end
+    end
+
+    def trash(files)
+      tf = confirm "trash [#{@marked_files.compact.size}] items? [y/n]: "
+
+      return unless tf
+
+      if @fff_trash_command
+        # from conflicting with commands named "trash".
+        # command "$FFF_TRASH_CMD" "${@:1:$#-1}"
+        # last is dot so we reject it
+        @@log.debug "trash: #{@fff_trash_command} :: #{files[0..-2]}"
+        system("#{@fff_trash_command} #{files[0..-2]}")
+
+      else
+        # this is for haiku
+        if @fff_trash != "" && File.directory?(@fff_trash)
+          begin
+            FileUtils.mv files[0..-2], @fff_trash
+          rescue e: Exception
+            @@log.debug " MOVE FAILED #{@fff_trash}"
+            cmd_line "Move failed."
+          end
+
+        # Go back to where we were.
+        # cd "$OLDPWD" ||:
+      end
+    end
     end
 
     def open(file="/")
@@ -623,14 +671,38 @@ module Fff
       end
     end # open
 
-    def cmd_line(str1, str2=nil)
-      @cmd_reply = ""
+    def confirm(prompt)
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      printf("\e7\e[%sH\e[?25h", @lines)
+      print prompt
+      yn = get_char
+      post_cmd_line # check if this is required
+      yn =~ /[Yy]/
+    end
+
+    # The original cmd_line takes variable arguments and has different processing
+    # for different cases. I have simplified it here.
+    # inc-search should be separate. getting a yes/no should be separate.
+    def cmd_line(prompt)
 
     # '\e7':     Save cursor position.
     # '\e[?25h': Unhide the cursor.
     # '\e[%sH':  Move cursor to bottom (cmd_line).
-      print("\e7\e[%sH\e[?25h", @lines)
+      printf("\e7\e[%sH\e[?25h", @lines)
+      reply = Readline.readline(prompt, true)
+      reply
+    end
+    def post_cmd_line
+        # '\e[%sH':  Move cursor back to cmd-line.
+        # '\e[?25h': Unhide the cursor.
+        printf("\e[%sH\e[?25h", @lines)
 
+        # '\e[2K':   Clear the entire cmd_line on finish.
+        # '\e[?25l': Hide the cursor.
+        # '\e8':     Restore cursor position.
+        printf "\e[2K\e[?25l\e8"
     end
 
     def handle_key(key)
@@ -698,14 +770,23 @@ module Fff
         # Show hidden files.
       when "."
         # TODO what to do here
-        @match_hidden = true
+        @match_hidden = !@match_hidden
+        @@log.debug " match_hidden is #{@match_hidden}"
         redraw true
         # Search.
       when "/"
-        cmd_line "/", "search"
+        reply = cmd_line "/" #, "search"
+
+        @list = Dir.glob(pwd + "/*#{reply}*")
+        @list_total = @list.size - 1
+        @scroll = 0
+        redraw
+        post_cmd_line
+
 
         # If the search came up empty, redraw the current dir.
         if @list.empty?
+          cmd_line "No results."
           @list = @cur_list
           @list_total = @list.size - 1
           redraw
@@ -723,7 +804,7 @@ module Fff
       when "Y", "M", "D", "S", "B"
         mark -1, key
 
-        # Do the file operation.
+        # Do the file operation. PASTE paste
       when "p"
         if @marked_files.compact.size > 0
           # check write access in this dir TODO
@@ -732,7 +813,14 @@ module Fff
           reset_terminal
 
           system("stty echo")
-          `#{@file_program} #{@marked_files.compact} .`
+          # what abuot escaping the files Shellwords ??? TODO FIXME
+          @@log.debug "PASTE: #{@file_program}: #{@marked_files.compact}"
+          # NOTE that a dot has been added at the end, trash has to ignore it!
+          if @file_program == :trash
+            trash @marked_files.compact
+          else
+            system("#{@file_program} #{@marked_files.compact.join(" ")} .")
+          end
           system("stty -echo")
 
           marked_files_clear
@@ -753,6 +841,7 @@ module Fff
         # TODO save file
         exit
       end
+      # TODO rename create mkdir ...
     end
 
     def main(argv)
@@ -773,7 +862,6 @@ module Fff
       # Vintage infinite loop.
       loop do
         reply = get_char
-        @@log.debug "char: #{reply}"
         handle_key(reply) if reply
         # read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
