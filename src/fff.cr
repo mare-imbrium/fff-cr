@@ -5,16 +5,21 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-09 00:34
+#  Last update: 2019-05-10 09:18
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
+## TODO:
+# ls_colors patterns part
+# why does cms_line clear the screen, even in fff
+
 require "readline"
 require "logger"
 require "file_utils"
 
 module Fff
-  VERSION = "0.1.0"
+  VERSION = "0.2.0"
   BLUE      = "\e[1;34m"
+  REVERSE      = "\e[7m"
 
   class Filer
     @@kh = {} of String => String
@@ -91,6 +96,7 @@ module Fff
       @previous_index  = 0
       @find_previous   = false
       @match_hidden    = false
+      @oldpwd          = ""
       @y               = 0
       # This hash contains colors for file patterns, updated from LS_COLORS
       @ls_pattern = {} of String => String
@@ -344,6 +350,12 @@ module Fff
       file = @list[index]?
         # If the dir item doesn't exist, end here.
         return unless file
+
+      # how to check for that empty item ??? XXX FIXME
+      if @list[0] == "empty" && !@list[1]?
+          printf("\r#{REVERSE}%s\e[m\r", "empty")
+        return
+      end
 
       file_name = File.basename(file)
       file_ext = File.extname(file_name)
@@ -840,8 +852,58 @@ module Fff
       when "q"
         # TODO save file
         exit
+      when /[1-9]/
+        fave = ENV["FFF_FAV#{key}"]?
+        open fave if fave
+      when "-"
+        open @oldpwd if @oldpwd
+      when "~"
+        open ENV["HOME"] if ENV["HOME"]?
+      when ":"
+        dir = cmd_line "Goto dir:"
+        return unless dir
+        dir = File.expand_path(dir)
+        open dir if File.directory?(dir)
+      when "f"
+        file = cmd_line "File to create: "
+        # check if exists and writable
+        return unless file
+        return if File.exists? file
+        # return unless File.writable? file
+        @@log.debug "creating file: #{file}"
+        FileUtils.touch file
+        redraw true
+      when "n"
+        dir = cmd_line "Mkdir: "
+        return unless dir
+        return if File.exists? dir
+        @@log.debug "creating dir: #{dir}"
+        FileUtils.mkdir_p dir
+        redraw true
+      when "r"
+        old = @list[@scroll]
+        return unless old
+        return unless File.exists? old
+
+        newname = cmd_line "Rename #{@list[@scroll]}: "
+
+        return unless newname
+        return if newname == ""
+        return unless File.writable? newname
+
+        File.rename old, newname
+        redraw true
+      when "e"
+        file = @list[@scroll]
+        return unless file
+        return unless File.exists? file
+        ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
+        @@log.debug "ED: #{ed} #{file}"
+        system("#{ed} #{file}")
+        setup_terminal
+        redraw
+
       end
-      # TODO rename create mkdir ...
     end
 
     def main(argv)
