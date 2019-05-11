@@ -5,11 +5,10 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-11 16:10
+#  Last update: 2019-05-11 23:55
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
-# inc-search
 
 require "readline"
 require "logger"
@@ -922,7 +921,6 @@ module Fff
           system("stty echo")
           # what abuot escaping the files Shellwords ??? TODO FIXME
           @@log.debug "PASTE: #{@file_program}: #{@marked_files.compact}"
-          # NOTE that a dot has been added at the end, trash has to ignore it!
           if @file_program == :trash
             trash @marked_files.compact
           else
@@ -1059,25 +1057,33 @@ module Fff
         reset_terminal
         exit
       end
+
       at_exit{ reset_terminal }
+
+      # Trap the window resize signal (handle window resize events).
+      # trap 'get_term_size; redraw' WINCH
+      Signal::WINCH.trap do
+        get_term_size
+        redraw
+      end
+
       get_ls_colors
       get_os
       get_term_size
       # get_w3m_path
       setup_options
       setup_terminal
-      @@log.info "before redraw"
       redraw true
-      @@log.info "after  redraw"
 
       # Vintage infinite loop.
       loop do
         reply = KeyHandler.get_char
         handle_key(reply) if reply
-        # read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
         # Exit if there is no longer a terminal attached.
         # [[ -t 1 ]] || exit 1
+        # NOT SURE:
+        # exit(1) unless STDOUT.isatty
       end
     end
   end # class
