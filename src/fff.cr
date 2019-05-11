@@ -5,12 +5,10 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-11 12:30
+#  Last update: 2019-05-11 16:10
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
-# ls_colors patterns part
-# why does cms_line clear the screen, even in fff
 # inc-search
 
 require "readline"
@@ -871,6 +869,19 @@ module Fff
         redraw true
         # Search.
       when "/"
+        incsearch
+
+        # If the search came up empty, redraw the current dir.
+        if @list.empty?
+          cmd_line "No results."
+          @list = @cur_list
+          @list_total = @list.size - 1
+          redraw
+          @search = false
+        else
+          @search = true
+        end
+      when "?"
         reply = cmd_line "/" #, "search"
 
         @list = Dir.glob(pwd + "/*#{reply}*")
@@ -988,6 +999,59 @@ module Fff
         redraw
 
       end
+    end
+    def incsearch
+      buff = ""
+      pwd = Dir.current
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      printf "\e7\e[%sH\e[?25h", @lines
+
+      loop do
+        printf "\r\e[K/#{buff}"
+        ch = KeyHandler.get_char
+        break if ch == "ESCAPE"
+        return unless ch
+        if ch == "ENTER"
+          # if only one result and it's a directory, then enter should open it.
+          if @list_total == 0 && File.directory?(@list[0])
+            # '\e[?25l': Hide the cursor.
+            printf "\e[?25l"
+
+            open @list.first
+
+            @search_end_early = true
+            return
+          end
+
+          # come out of search and let user navigate
+          break
+        end
+        if ch == "BACKSPACE"
+          buff = buff[0..-2]
+        elsif ch.size == 1 && ch =~ /[A-Za-z0-9\.]/
+          buff += ch
+        else
+          # ignore other keys including arrow etc
+          next
+        end
+
+        entries = Dir.glob(pwd + "/*#{buff}*") #, match_hidden: false)
+        @list = entries
+        @list_total = @list.size - 1
+        @scroll = 0
+        redraw
+
+        # '\e[%sH':  Move cursor back to cmd-line.
+        # '\e[?25h': Unhide the cursor.
+        printf "\e[%sH\e[?25h", @lines
+      end
+
+      # '\e[2K':   Clear the entire cmd_line on finish.
+      # '\e[?25l': Hide the cursor.
+      # '\e8':     Restore cursor position.
+      printf "\e[2K\e[?25l\e8"
     end
 
     def main(argv)
