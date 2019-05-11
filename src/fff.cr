@@ -5,12 +5,13 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-10 09:18
+#  Last update: 2019-05-11 12:30
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
 # ls_colors patterns part
 # why does cms_line clear the screen, even in fff
+# inc-search
 
 require "readline"
 require "logger"
@@ -21,7 +22,12 @@ module Fff
   BLUE      = "\e[1;34m"
   REVERSE      = "\e[7m"
 
-  class Filer
+  # Handles keystrokes from terminal returning a String representation
+  #
+  # = Usage
+  # key = KeyHandler.get_char
+  #
+  class KeyHandler
     @@kh = {} of String => String
     @@kh["\eOP"] = "F1"
     @@kh["\e[A"] = "UP"
@@ -68,6 +74,41 @@ module Fff
     @@kh[KEY_S_F1] = "S-F1"
     # @@kh["\e[1;2Q"] = "S-F2"
 
+    def self.get_char : String
+      STDIN.raw do |io|
+        buffer = Bytes.new(4)
+        bytes_read = io.read(buffer)
+        return "ERR" if bytes_read == 0
+        input = String.new(buffer[0, bytes_read])
+
+        key = @@kh[input]?
+          return key if key
+
+        cn = buffer[0]
+        return "ENTER" if cn == 10 || cn == 13
+        return "BACKSPACE" if cn == 127
+        return "C-SPACE" if cn == 0
+        return "SPACE" if cn == 32
+        # next does not seem to work, you need to bind C-i
+        return "TAB" if cn == 8
+
+        if cn >= 0 && cn < 27
+          x = cn + 96
+          return "C-#{x.chr}"
+        end
+        if cn == 27
+          if bytes_read == 2
+            return "M-#{buffer[1].chr}"
+          end
+        end
+        return input
+      end
+    end
+  end # class
+
+
+  class Filer
+
 
     @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
     @@log.level = Logger::DEBUG
@@ -111,6 +152,8 @@ module Fff
         "or"        => "\e[40;31;01m",
         "ex"        => "\e[01;32m",
       }
+      @ls_colors = {} of String => String
+      @lsp       = ""  # string containing concatenated patterns
     end
 
     def get_os
@@ -233,15 +276,68 @@ module Fff
       # Parse the LS_COLORS variable and declare each file type
       # as a separate variable.
       # Format: ':.ext=0;0:*.jpg=0;0;0:*png=0;0;0;0:'
-      unless ENV["LS_COLORS"]?
-          @fff_ls_colors = false
+      colorvar = ENV["LS_COLORS"]?
+      if colorvar.nil?
+        @fff_ls_colors = false
         return
       end
-
-      # Turn $LS_COLORS into an array.
-
-      # TODO not totally clear what is happening with all the variablaes and arrays
-
+      @fff_ls_colors = true
+      ls = colorvar.split(":")
+      ls.each do |e|
+        next if e == ""
+        patt, colr = e.split "="
+        colr = "\e[" + colr + "m"
+        if e.starts_with? "*."
+          # extension, avoid '*' and use the rest as key
+          @ls_colors[patt[1..-1]] = colr
+          # @@log.debug "COLOR: Writing extension (#{patt})."
+        elsif e[0] == '*'
+          # file pattern, this would be a glob pattern not regex
+          # only for files not directories
+          patt = patt.gsub(".", "\.")
+          patt = patt.sub("+", "\\\+") # if i put a plus it does not go at all
+          patt = patt.gsub("-", "\-")
+          patt = patt.tr("?", ".")
+          patt = patt.gsub("*", ".*")
+          patt = "^#{patt}" if patt[0] != "."
+          patt = "#{patt}$" if patt[-1] != "*"
+          @ls_pattern[patt] = colr
+          # @@log.debug "COLOR: Writing file (#{patt})."
+        elsif patt.size == 2
+          # file type, needs to be mapped to what ruby will return
+          # file, directory di, characterSpecial cd, blockSpecial bd, fifo pi, link ln, socket so, or unknown
+          # di = directory
+          # fi = file
+          # ln = symbolic link
+          # pi = fifo file
+          # so = socket file
+          # bd = block (buffered) special file
+          # cd = character (unbuffered) special file
+          # or = symbolic link pointing to a non-existent file (orphan)
+          # mi = non-existent file pointed to by a symbolic link (visible when you type ls -l)
+          # ex = file which is executable (ie. has 'x' set in permissions).
+          case patt
+          when "di"
+            @ls_ftype["Directory"] = colr
+          when "cd"
+            @ls_ftype["CharacterDevice"] = colr
+          when "bd"
+            @ls_ftype["BlockDevice"] = colr
+          when "pi"
+            @ls_ftype["Pipe"] = colr
+          when "ln"
+            @ls_ftype["Symlink"] = colr
+          when "so"
+            @ls_ftype["Socket"] = colr
+          else
+            @ls_ftype[patt] = colr
+          end
+          # @@log.debug "COLOR: ftype #{patt}"
+        end
+      end
+      @lsp = @ls_pattern.keys.join('|')
+      @@log.debug "LSP is #{@lsp}"
+      @@log.debug "LS_COLORS is #{@ls_colors}"
     end
 
     def get_mime_type(file)
@@ -362,7 +458,11 @@ module Fff
       format = ""
       suffix = ""
 
-      ftype = File.info(file).type.to_s # it was File::Type thus not matching
+      ftype = ""
+      # check otherwise deadlinks crash 'info'
+      if File.exists?(file)
+        ftype = File.info(file).type.to_s # it was File::Type thus not matching
+      end
       # Directory.
       if File.directory?(file)
         color2 = ENV["FFF_COL1"]? || "2"
@@ -411,13 +511,27 @@ module Fff
         # format = "\e[#{color}m"
         format = color
 
-        # NEED to decipher exactly what is happening here in fff
-        # LS_COLORS and pattern stuff and how BASH_REMATCH is filled
+      elsif @fff_ls_colors && !@ls_pattern.empty? && file.match(/#{@lsp}/)
+         @ls_pattern.each do |k, v|
+           if /#{k}/.match(file)
+              @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
+             # return v
+             format = v
+             @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
+             break
+              # else
+              # @@log.debug "#{fname} di not match #{k}. color is #{v[1..-2]}"
+           end
+         end
+      elsif @fff_ls_colors && !@ls_colors.empty? && file_ext != "" && @ls_colors[file_ext]?
+        format = @ls_colors[file_ext]
+        @@log.debug "color for extn: #{file_ext} is #{format.sub(";",":")}"
       else
         # case of File or fi
         color = @ls_ftype[ftype]? || "\e[37m"
         # format = "\e[#{color}m"
         format = color
+        @@log.debug "ELSE color for #{ftype}, #{file_ext} is #{format.sub(";",":")}"
 
       end
       # If the list item is under the cursor.
@@ -590,36 +704,6 @@ module Fff
       status_line
     end
 
-    def get_char : String
-      STDIN.raw do |io|
-        buffer = Bytes.new(4)
-        bytes_read = io.read(buffer)
-        return "ERR" if bytes_read == 0
-        input = String.new(buffer[0, bytes_read])
-
-        key = @@kh[input]?
-          return key if key
-
-        cn = buffer[0]
-        return "ENTER" if cn == 10 || cn == 13
-        return "BACKSPACE" if cn == 127
-        return "C-SPACE" if cn == 0
-        return "SPACE" if cn == 32
-        # next does not seem to work, you need to bind C-i
-        return "TAB" if cn == 8
-
-        if cn >= 0 && cn < 27
-          x = cn + 96
-          return "C-#{x.chr}"
-        end
-        if cn == 27
-          if bytes_read == 2
-            return "M-#{buffer[1].chr}"
-          end
-        end
-        return input
-      end
-    end
 
     def trash(files)
       tf = confirm "trash [#{@marked_files.compact.size}] items? [y/n]: "
@@ -689,7 +773,7 @@ module Fff
       # '\e[%sH':  Move cursor to bottom (cmd_line).
       printf("\e7\e[%sH\e[?25h", @lines)
       print prompt
-      yn = get_char
+      yn = KeyHandler.get_char
       post_cmd_line # check if this is required
       yn =~ /[Yy]/
     end
@@ -821,7 +905,7 @@ module Fff
         if @marked_files.compact.size > 0
           # check write access in this dir TODO
 
-          clear_screen
+          # clear_screen
           reset_terminal
 
           system("stty echo")
@@ -912,6 +996,7 @@ module Fff
         exit
       end
       at_exit{ reset_terminal }
+      get_ls_colors
       get_os
       get_term_size
       # get_w3m_path
@@ -923,7 +1008,7 @@ module Fff
 
       # Vintage infinite loop.
       loop do
-        reply = get_char
+        reply = KeyHandler.get_char
         handle_key(reply) if reply
         # read "${read_flags[@]}" -srn 1 && key "$REPLY"
 
