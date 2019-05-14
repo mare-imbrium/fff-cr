@@ -1,7 +1,7 @@
 # fff-cr
 
-Crystal port of dylanaraps/fff : freakin fast file manager written in bash.
-I am just learning Crystal, so this is just for learning.
+Crystal port of dylanaraps/fff : "freakin fast file" manager written in bash.
+I am just learning Crystal, so this project is just for learning.
 
 Features:
 - move between directories using arrow keys or h/l.
@@ -20,17 +20,16 @@ Not ported:
 
 ## Installation
 
-HOW TO INSTALL CRYSTAL executable ?
+??? HOW TO INSTALL a CRYSTAL executable ?
 
-Copy files over or clone repo.
-Run crystal build src/fff.cr
-Copy fff to ~/bin or any other directory in PATH.
+- Copy files over or clone repo.
+- crystal build src/fff.cr
+- Copy fff to ~/bin or any other directory in PATH.
+- Log file is written to ~/tmp/fff.log
 
 ## Usage
 
-Just run it, ok ?
-
-  fff
+$  fff
 
 ## Development
 
