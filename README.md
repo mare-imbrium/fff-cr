@@ -3,18 +3,37 @@
 Crystal port of dylanaraps/fff : freakin fast file manager written in bash.
 I am just learning Crystal, so this is just for learning.
 
+Features:
+- move between directories using arrow keys or h/l.
+- open files with right arrow.
+- select files and move or delete or yank
+
+I have not ported everything.
+
+Not ported:
+- bulk rename
+- image display -- can't install whatever it is, so can't run it
+- pick key mappings from ENV
+- some very bash specific stuff.
+- open a shell
+-
+
 ## Installation
 
-TODO: Write installation instructions here
 HOW TO INSTALL CRYSTAL executable ?
+
+Copy files over or clone repo.
+Run crystal build src/fff.cr
+Copy fff to ~/bin or any other directory in PATH.
 
 ## Usage
 
 Just run it, ok ?
 
+  fff
+
 ## Development
 
-TODO: Write development instructions here
 
 ## Contributing
 
