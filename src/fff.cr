@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-11 23:55
+#  Last update: 2019-05-13 23:44
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -107,10 +107,11 @@ module Fff
   class Filer
 
 
-    @@log = Logger.new(io: File.new(File.expand_path("log.txt"), "w"))
+    @@log = Logger.new(io: File.new(File.expand_path("~/tmp/fff.log"), "w"))
     @@log.level = Logger::DEBUG
     @@log.info "========== fff    started ================= ----------"
-    # # --------------------------------------------- ##
+
+
     def initialize
       @lines           = 0
       @columns         = 0
@@ -136,8 +137,10 @@ module Fff
       @match_hidden    = false
       @oldpwd          = ""
       @y               = 0
+
       # This hash contains colors for file patterns, updated from LS_COLORS
       @ls_pattern = {} of String => String
+
       # This hash contains colors for file types, updated from LS_COLORS
       # Default values in absence of LS_COLORS
       # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
@@ -149,6 +152,8 @@ module Fff
         "or"        => "\e[40;31;01m",
         "ex"        => "\e[01;32m",
       }
+
+      # contains colors for various extensions. Key contains dot (.txt)
       @ls_colors = {} of String => String
       @lsp       = ""  # string containing concatenated patterns
     end
@@ -167,16 +172,18 @@ module Fff
         # puts "keys: #{ENV.keys.join("\n")}"
         # we will be moving to some dir, not using trash
       when "haiku"
+        # XXX UNTESTED
         @opener = "open"
         # set trash command and dir
-        # what the hell is this anyway
         @@log.debug "Haiku"
         @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "trash"
       else
+        # XXX UNTESTED
         @@log.debug "Else shouldn't linux be taken care of ??"
         @@log.debug ostype
       end
     end
+
     def setup_terminal
       # Setup the terminal for the TUI.
       # '\e[?1049h': Use alternative screen buffer.
@@ -192,7 +199,6 @@ module Fff
     end
 
     def reset_terminal
-      @@log.debug " called reset terminal "
       # Reset the terminal to a useable state (undo all changes).
       # '\e[?7h':   Re-enable line wrapping.
       # '\e[?25h':  Unhide the cursor.
@@ -285,12 +291,13 @@ module Fff
         patt, colr = e.split "="
         colr = "\e[" + colr + "m"
         if e.starts_with? "*."
-          # extension, avoid '*' and use the rest as key
+          # extension. avoid '*' and use the rest as key
           @ls_colors[patt[1..-1]] = colr
           # @@log.debug "COLOR: Writing extension (#{patt})."
         elsif e[0] == '*'
-          # file pattern, this would be a glob pattern not regex
+          # file pattern. this would be a glob pattern not regex
           # only for files not directories
+          # Convert glob pattern to regex.
           patt = patt.gsub(".", "\.")
           patt = patt.sub("+", "\\\+") # if i put a plus it does not go at all
           patt = patt.gsub("-", "\-")
@@ -301,7 +308,7 @@ module Fff
           @ls_pattern[patt] = colr
           # @@log.debug "COLOR: Writing file (#{patt})."
         elsif patt.size == 2
-          # file type, needs to be mapped to what ruby will return
+          # file type, needs to be mapped to what crystal will return
           # file, directory di, characterSpecial cd, blockSpecial bd, fifo pi, link ln, socket so, or unknown
           # di = directory
           # fi = file
@@ -333,8 +340,8 @@ module Fff
         end
       end
       @lsp = @ls_pattern.keys.join('|')
-      @@log.debug "LSP is #{@lsp}"
-      @@log.debug "LS_COLORS is #{@ls_colors}"
+      # @@log.debug "LSP is #{@lsp}"
+      # @@log.debug "LS_COLORS is #{@ls_colors}"
     end
 
     def get_mime_type(file)
@@ -428,9 +435,7 @@ module Fff
       @list.push "empty" if @list && @list.empty?
 
       @list_total = @list.size - 1
-      # @@log.debug "read_dir: #{@list_total}, prev: #{@previous_index}"
-      # @@log.debug "read_dir: #{pwd},:: #{@oldpwd}"
-      # @@log.debug "read_dir: #{@list}"
+
       marked_files_clear
 
 
@@ -509,26 +514,24 @@ module Fff
         format = color
 
       elsif @fff_ls_colors && !@ls_pattern.empty? && file.match(/#{@lsp}/)
+        # found a file pattern
          @ls_pattern.each do |k, v|
            if /#{k}/.match(file)
-              @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
-             # return v
+              # @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
              format = v
-             @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
+             # @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
              break
-              # else
-              # @@log.debug "#{fname} di not match #{k}. color is #{v[1..-2]}"
            end
          end
       elsif @fff_ls_colors && !@ls_colors.empty? && file_ext != "" && @ls_colors[file_ext]?
+        # found a color for that file extension
         format = @ls_colors[file_ext]
-        @@log.debug "color for extn: #{file_ext} is #{format.sub(";",":")}"
+        # @@log.debug "color for extn: #{file_ext} is #{format.sub(";",":")}"
       else
         # case of File or fi
         color = @ls_ftype[ftype]? || "\e[37m"
         # format = "\e[#{color}m"
         format = color
-        @@log.debug "ELSE color for #{ftype}, #{file_ext} is #{format.sub(";",":")}"
 
       end
       # If the list item is under the cursor.
@@ -595,8 +598,8 @@ module Fff
         scroll_end      =  scroll_start  +  @max_items
         scroll_new_pos  =  @max_items/2  +  1
       end
-      @@log.debug "scroll_start: #{scroll_start}"
-      @@log.debug "scroll_end:   #{scroll_end}"
+      # @@log.debug "scroll_start: #{scroll_start}"
+      # @@log.debug "scroll_end:   #{scroll_end}"
 
 
         # Reset cursor position.
@@ -604,9 +607,7 @@ module Fff
         i = scroll_start
         while i < scroll_end
           print("\n") if i > scroll_start
-          # @@log.debug " calling print_line with #{i}"
           print_line(i)
-          # @@log.debug " after   print_line with #{i}"
           i += 1
         end
 
@@ -619,25 +620,25 @@ module Fff
     end
 
     def redraw(full = false)
-      @@log.debug "inside redraw with #{full}"
       # Redraw the current window.
       # If 'full' is passed, re-fetch the directory list.
       if full
-        @@log.debug "inside redraw before read_dir"
         read_dir
-        # @@log.debug "inside redraw after  read_dir"
         @scroll = 0
       end
 
-      # @@log.debug "inside redraw before clear_screen: #{@lines}, #{@max_items}"
       clear_screen
-        # @@log.debug "inside redraw after  clear_screen"
       draw_dir
-        # @@log.debug "inside redraw after  draw_dir"
       status_line
-        # @@log.debug "inside redraw after  status_line"
     end
 
+    # clear marked files.
+    #
+    # fff maintains a parallel array for marked files. However, instead of appending
+    # a selected file to the marked array, it uses the same index for that file
+    # in the marked array. This means that the size of both arrays is the same.
+    # Bash lets you place an item in any index, wherease crystal will give an error.
+    # So we have to create an array and append nils to it.
     def marked_files_clear
       @marked_files.clear
       @list_total.times { @marked_files.push nil }
@@ -724,10 +725,10 @@ module Fff
             cmd_line "Move failed."
           end
 
-        # Go back to where we were.
-        # cd "$OLDPWD" ||:
+          # Go back to where we were.
+          # cd "$OLDPWD" ||:
+        end
       end
-    end
     end
 
     def open(file="/")
@@ -747,7 +748,6 @@ module Fff
           # "${VISUAL:-${EDITOR:-vi}}" "$1"
           # ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
           ed = ENV["MANPAGER"]? || ENV["PAGER"]? || "less"
-          @@log.debug "ED: #{ed} #{file}"
           system("#{ed} #{file}")
           setup_terminal
           redraw
@@ -799,7 +799,7 @@ module Fff
     end
 
     def handle_key(key)
-      @@log.debug "inside handle_key with #{key}"
+      # @@log.debug "inside handle_key with #{key}"
       pwd = Dir.current
 
       case key
@@ -846,6 +846,7 @@ module Fff
               print_line @scroll
               status_line
             end
+
       when "g"
         # Go to top.
         if @scroll != 0
@@ -860,12 +861,12 @@ module Fff
           redraw
 
         end
+
         # Show hidden files.
       when "."
-        # TODO what to do here
         @match_hidden = !@match_hidden
-        @@log.debug " match_hidden is #{@match_hidden}"
         redraw true
+
         # Search.
       when "/"
         incsearch
@@ -880,6 +881,8 @@ module Fff
         else
           @search = true
         end
+
+        # the non-inc search
       when "?"
         reply = cmd_line "/" #, "search"
 
@@ -945,18 +948,28 @@ module Fff
       when "q"
         # TODO save file
         exit
+
+        # these are bookmarks for directories. Go to bookmark
       when /[1-9]/
         fave = ENV["FFF_FAV#{key}"]?
         open fave if fave
+
+        # goto previous dir
       when "-"
         open @oldpwd if @oldpwd
+
+        # goto home dir
       when "~"
         open ENV["HOME"] if ENV["HOME"]?
+
+          # Ask which dir to go to
       when ":"
         dir = cmd_line "Goto dir:"
         return unless dir
         dir = File.expand_path(dir)
         open dir if File.directory?(dir)
+
+        # create a file
       when "f"
         file = cmd_line "File to create: "
         # check if exists and writable
@@ -966,6 +979,8 @@ module Fff
         @@log.debug "creating file: #{file}"
         FileUtils.touch file
         redraw true
+
+        # create a dir
       when "n"
         dir = cmd_line "Mkdir: "
         return unless dir
@@ -973,6 +988,9 @@ module Fff
         @@log.debug "creating dir: #{dir}"
         FileUtils.mkdir_p dir
         redraw true
+
+
+        # rename a file
       when "r"
         old = @list[@scroll]
         return unless old
@@ -986,18 +1004,23 @@ module Fff
 
         File.rename old, newname
         redraw true
+
+        # edit a file
       when "e"
         file = @list[@scroll]
         return unless file
         return unless File.exists? file
+
         ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
-        @@log.debug "ED: #{ed} #{file}"
         system("#{ed} #{file}")
         setup_terminal
         redraw
 
       end
     end
+
+
+    # Incremental search (as you type)
     def incsearch
       buff = ""
       pwd = Dir.current
@@ -1028,6 +1051,8 @@ module Fff
         end
         if ch == "BACKSPACE"
           buff = buff[0..-2]
+
+          # only append alphanum characters and dot
         elsif ch.size == 1 && ch =~ /[A-Za-z0-9\.]/
           buff += ch
         else
