@@ -18,6 +18,8 @@ Not ported:
 - open a shell
 -
 
+The original `fff` program link: https://github.com/dylanaraps/fff
+
 ## Installation
 
 ??? HOW TO INSTALL a CRYSTAL executable ?
