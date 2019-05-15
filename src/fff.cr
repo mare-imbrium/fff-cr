@@ -5,107 +5,145 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-13 23:44
+#  Last update: 2019-05-15 11:07
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
+# - 2019-05-15 - break screen stuff into another class
+# - 2019-05-15 - screen should have WINCH with a block
+# - 2019-05-15 - move mark logic to another class ?
 
 require "readline"
 require "logger"
 require "file_utils"
+require "./keyhandler"
 
 module Fff
-  VERSION = "0.2.0"
+  VERSION = "0.3.0"
   BLUE      = "\e[1;34m"
   REVERSE      = "\e[7m"
 
-  # Handles keystrokes from terminal returning a String representation
-  #
-  # = Usage
-  # key = KeyHandler.get_char
-  #
-  class KeyHandler
-    @@kh = {} of String => String
-    @@kh["\eOP"] = "F1"
-    @@kh["\e[A"] = "UP"
-    @@kh["\e[5~"] = "PGUP"
-    @@kh["\e"] = "ESCAPE"
-    KEY_PGDN = "\e[6~"
-    KEY_PGUP = "\e[5~"
-    # # I needed to replace the O with a [ for this to work
-    #  in Vim Home comes as ^[OH whereas on the command line it is correct as ^[[H
-    KEY_HOME = "\e[H"
-    KEY_END  = "\e[F"
-    KEY_F1   = "\eOP"
-    KEY_UP   = "\e[A"
-    KEY_DOWN = "\e[B"
+  class Screen
 
-    @@kh[KEY_PGDN] = "PgDn"
-    @@kh[KEY_PGUP] = "PgUp"
-    @@kh[KEY_HOME] = "Home"
-    @@kh[KEY_END] = "End"
-    @@kh[KEY_F1] = "F1"
-    @@kh[KEY_UP] = "UP"
-    @@kh[KEY_DOWN] = "DOWN"
-    KEY_LEFT  = "\e[D"
-    KEY_RIGHT = "\e[C"
-    @@kh["\eOQ"] = "F2"
-    @@kh["\eOR"] = "F3"
-    @@kh["\eOS"] = "F4"
-    @@kh[KEY_LEFT] = "LEFT"
-    @@kh[KEY_RIGHT] = "RIGHT"
-    KEY_F5 = "\e[15~"
-    KEY_F6 = "\e[17~"
-    KEY_F7 = "\e[18~"
-    KEY_F8 = "\e[19~"
-    KEY_F9 = "\e[20~"
-    KEY_F10 = "\e[21~"
-    KEY_S_F1 = "\e[1;2P"
-    @@kh[KEY_F5] = "F5"
-    @@kh[KEY_F6] = "F6"
-    @@kh[KEY_F7] = "F7"
-    @@kh[KEY_F8] = "F8"
-    @@kh[KEY_F9] = "F9"
-    @@kh[KEY_F10] = "F10"
-    # testing out shift+Function. these are the codes my kb generates
-    @@kh[KEY_S_F1] = "S-F1"
-    # @@kh["\e[1;2Q"] = "S-F2"
+    getter lines = 0
+    getter columns = 0
+    getter max_items = 0
 
-    def self.get_char : String
-      STDIN.raw do |io|
-        buffer = Bytes.new(4)
-        bytes_read = io.read(buffer)
-        return "ERR" if bytes_read == 0
-        input = String.new(buffer[0, bytes_read])
-
-        key = @@kh[input]?
-          return key if key
-
-        cn = buffer[0]
-        return "ENTER" if cn == 10 || cn == 13
-        return "BACKSPACE" if cn == 127
-        return "C-SPACE" if cn == 0
-        return "SPACE" if cn == 32
-        # next does not seem to work, you need to bind C-i
-        return "TAB" if cn == 8
-
-        if cn >= 0 && cn < 27
-          x = cn + 96
-          return "C-#{x.chr}"
-        end
-        if cn == 27
-          if bytes_read == 2
-            return "M-#{buffer[1].chr}"
-          end
-        end
-        return input
-      end
+    def initialize
+      get_term_size
     end
-  end # class
 
+    def get_term_size
+      # Get terminal size ('stty' is POSIX and always available).
+      # This can't be done reliably across all bash versions in pure bash.
+      l, c = `stty size`.split(" ") #.map{ |e| e.to_i }
+      @lines = l.to_i
+      @columns = c.to_i
+
+      # Max list items that fit in the scroll area.
+      # This may change with caller, but needs to be recalculated whenever
+      # screen size changes
+      @max_items = @lines - 3
+    end
+    def clear_screen
+      # Only clear the scrolling window (dir item list).
+      # '\e[%sH':    Move cursor to bottom of scroll area.
+      # '\e[9999C':  Move cursor to right edge of the terminal.
+      # '\e[1J':     Clear screen to top left corner (from cursor up).
+      # '\e[2J':     Clear screen fully (if using tmux) (fixes clear issues).
+      # '\e[1;%sr':  Clearing the screen resets the scroll region(?). Re-set it.
+      #              Also sets cursor to (0,0).
+      ## if TMUX has a value then use clear
+      ## if TMUX is blank, then return blank
+
+      printf("\e[%sH\e[9999C\e[1J\e[1;%sr",
+        @lines-2,
+        @max_items      )
+    end
+    def setup_terminal
+      # Setup the terminal for the TUI.
+      # '\e[?1049h': Use alternative screen buffer.
+      # '\e[?7l':    Disable line wrapping.
+      # '\e[?25l':   Hide the cursor.
+      # '\e[2J':     Clear the screen.
+      # '\e[1;Nr':   Limit scrolling to scrolling area.
+      #              Also sets cursor to (0,0).
+      # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
+      printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
+      # Hide echoing of user input
+      system("stty -echo")
+    end
+
+    def reset_terminal
+      # Reset the terminal to a useable state (undo all changes).
+      # '\e[?7h':   Re-enable line wrapping.
+      # '\e[?25h':  Unhide the cursor.
+      # '\e[2J':    Clear the terminal.
+      # '\e[;r':    Set the scroll region to its default value.
+      #             Also sets cursor to (0,0).
+      # '\e[?1049l: Restore main screen buffer.
+      print("\e[?7h\e[?25h\e[2J\e[;r\e[?1049l")
+
+      # Show user input.
+      system("stty echo")
+    end
+    def post_cmd_line
+        # '\e[%sH':  Move cursor back to cmd-line.
+        # '\e[?25h': Unhide the cursor.
+        printf("\e[%sH\e[?25h", @lines)
+
+        # '\e[2K':   Clear the entire cmd_line on finish.
+        # '\e[?25l': Hide the cursor.
+        # '\e8':     Restore cursor position.
+        printf "\e[2K\e[?25l\e8"
+    end
+
+    def move_to_bottom
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      # printf("\e7\e[%sH\e[?25h", @lines)
+      printf("\e[%sH", @lines)
+    end
+
+    def status_line(color, text)
+      # '\e7':       Save cursor position.
+      #              This is more widely supported than '\e[s'.
+      # '\e[%sH':    Move cursor to bottom of the terminal.
+      # '\e[30;41m': Set foreground and background colors.
+      # '%*s':       Insert enough spaces to fill the screen width.
+      #              This sets the background color to the whole line
+      #              and fixes issues in 'screen' where '\e[K' doesn't work.
+      # '\r':        Move cursor back to column 0 (was at EOL due to above).
+      # '\e[m':      Reset text formatting.
+      # '\e[H\e[K':  Clear line below status_line.
+      # '\e8':       Restore cursor position.
+      #              This is more widely supported than '\e[u'.
+      printf "\e7\e[%sH\e[30;4%sm%*s\r%s\e[m\e[%sH\e[K\e8", \
+        @lines-1, \
+        color, \
+        @columns, " ", \
+        text, \
+        @lines
+    end
+    def reset_cursor_position
+      printf "\e[H"
+    end
+    def unhide_cursor
+      printf "\e[?25h"
+    end
+    def hide_cursor
+      printf "\e[?25l"
+    end
+    def save_cursor_position
+      printf "\e7"
+    end
+    def restore_cursor_position
+      printf "\e8"
+    end
+  end
 
   class Filer
-
 
     @@log = Logger.new(io: File.new(File.expand_path("~/tmp/fff.log"), "w"))
     @@log.level = Logger::DEBUG
@@ -113,9 +151,11 @@ module Fff
 
 
     def initialize
-      @lines           = 0
-      @columns         = 0
+      # @lines           = 0
+      # @columns         = 0
       @max_items       = 0
+      @screen           = Screen.new
+      @max_items       = @screen.max_items
       @list            = [] of String
       @cur_list        = [] of String
       @scroll          = 0
@@ -184,53 +224,7 @@ module Fff
       end
     end
 
-    def setup_terminal
-      # Setup the terminal for the TUI.
-      # '\e[?1049h': Use alternative screen buffer.
-      # '\e[?7l':    Disable line wrapping.
-      # '\e[?25l':   Hide the cursor.
-      # '\e[2J':     Clear the screen.
-      # '\e[1;Nr':   Limit scrolling to scrolling area.
-      #              Also sets cursor to (0,0).
-      # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
-      printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
-      # Hide echoing of user input
-      system("stty -echo")
-    end
 
-    def reset_terminal
-      # Reset the terminal to a useable state (undo all changes).
-      # '\e[?7h':   Re-enable line wrapping.
-      # '\e[?25h':  Unhide the cursor.
-      # '\e[2J':    Clear the terminal.
-      # '\e[;r':    Set the scroll region to its default value.
-      #             Also sets cursor to (0,0).
-      # '\e[?1049l: Restore main screen buffer.
-      print("\e[?7h\e[?25h\e[2J\e[;r\e[?1049l")
-
-      # Show user input.
-      system("stty echo")
-    end
-
-    def clear_screen
-      # Only clear the scrolling window (dir item list).
-      # '\e[%sH':    Move cursor to bottom of scroll area.
-      # '\e[9999C':  Move cursor to right edge of the terminal.
-      # '\e[1J':     Clear screen to top left corner (from cursor up).
-      # '\e[2J':     Clear screen fully (if using tmux) (fixes clear issues).
-      # '\e[1;%sr':  Clearing the screen resets the scroll region(?). Re-set it.
-      #              Also sets cursor to (0,0).
-      ## if TMUX has a value then use clear
-      ## if TMUX is blank, then return blank
-
-      # printf("\e[%sH\e[9999C\e[1J%b\e[1;%sr", \
-             # @lines-2, ENV["TMUX"]? && "\e[2J" , @max_items)
-
-
-      printf("\e[%sH\e[9999C\e[1J\e[1;%sr",
-        @lines-2,
-        @max_items      ) # was grows
-    end
 
 
     def setup_options
@@ -264,25 +258,15 @@ module Fff
 
     end
 
-    def get_term_size
-      # Get terminal size ('stty' is POSIX and always available).
-      # This can't be done reliably across all bash versions in pure bash.
-      l, c = `stty size`.split(" ") #.map{ |e| e.to_i }
-      @lines = l.to_i
-      @columns = c.to_i
-
-      # Max list items that fit in the scroll area.
-      @max_items = @lines - 3
-    end
 
     def get_ls_colors
       # Parse the LS_COLORS variable and declare each file type
       # as a separate variable.
       # Format: ':.ext=0;0:*.jpg=0;0;0:*png=0;0;0;0:'
       colorvar = ENV["LS_COLORS"]?
-      if colorvar.nil?
-        @fff_ls_colors = false
-        return
+        if colorvar.nil?
+          @fff_ls_colors = false
+          return
       end
       @fff_ls_colors = true
       ls = colorvar.split(":")
@@ -369,26 +353,8 @@ module Fff
 
       color = ENV["FFF_COL2"]? || "1"
 
-      # '\e7':       Save cursor position.
-      #              This is more widely supported than '\e[s'.
-      # '\e[%sH':    Move cursor to bottom of the terminal.
-      # '\e[30;41m': Set foreground and background colors.
-      # '%*s':       Insert enough spaces to fill the screen width.
-      #              This sets the background color to the whole line
-      #              and fixes issues in 'screen' where '\e[K' doesn't work.
-      # '\r':        Move cursor back to column 0 (was at EOL due to above).
-      # '\e[m':      Reset text formatting.
-      # '\e[H\e[K':  Clear line below status_line.
-      # '\e8':       Restore cursor position.
-      #              This is more widely supported than '\e[u'.
-      printf "\e7\e[%sH\e[30;4%sm%*s\r%s %s%s\e[m\e[%sH\e[K\e8", \
-        @lines-1, \
-        color, \
-        @columns, " ", \
-        "(#{@scroll+1}/#{@list_total+1})", \
-        ui, \
-        fname, \
-        @lines
+      text = "(#{@scroll+1}/#{@list_total+1}) #{ui} #{fname}"
+      @screen.status_line(color, text)
     end
 
     def read_dir
@@ -515,14 +481,14 @@ module Fff
 
       elsif @fff_ls_colors && !@ls_pattern.empty? && file.match(/#{@lsp}/)
         # found a file pattern
-         @ls_pattern.each do |k, v|
-           if /#{k}/.match(file)
-              # @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
-             format = v
-             # @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
-             break
-           end
-         end
+        @ls_pattern.each do |k, v|
+          if /#{k}/.match(file)
+            # @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
+            format = v
+            # @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
+            break
+          end
+        end
       elsif @fff_ls_colors && !@ls_colors.empty? && file_ext != "" && @ls_colors[file_ext]?
         # found a color for that file extension
         format = @ls_colors[file_ext]
@@ -602,21 +568,21 @@ module Fff
       # @@log.debug "scroll_end:   #{scroll_end}"
 
 
-        # Reset cursor position.
-        printf "\e[H"
-        i = scroll_start
-        while i < scroll_end
-          print("\n") if i > scroll_start
-          print_line(i)
-          i += 1
-        end
+      # Reset cursor position.
+      @screen.reset_cursor_position
+      i = scroll_start
+      while i < scroll_end
+        print("\n") if i > scroll_start
+        print_line(i)
+        i += 1
+      end
 
 
-        # Move the cursor to its new position if it changed.
-        # If the variable 'scroll_new_pos' is empty, the cursor
-        # is moved to line '0'.
-        printf("\e[%sH", scroll_new_pos)
-        @y = scroll_new_pos
+      # Move the cursor to its new position if it changed.
+      # If the variable 'scroll_new_pos' is empty, the cursor
+      # is moved to line '0'.
+      printf("\e[%sH", scroll_new_pos)
+      @y = scroll_new_pos
     end
 
     def redraw(full = false)
@@ -627,7 +593,7 @@ module Fff
         @scroll = 0
       end
 
-      clear_screen
+      @screen.clear_screen
       draw_dir
       status_line
     end
@@ -743,23 +709,23 @@ module Fff
         if mime_type.includes?("text") \
             || mime_type.includes?("x-empty")\
             || mime_type.includes?("json")
-          clear_screen
-          reset_terminal
+          @screen.clear_screen
+          @screen.reset_terminal
           # "${VISUAL:-${EDITOR:-vi}}" "$1"
           # ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
           ed = ENV["MANPAGER"]? || ENV["PAGER"]? || "less"
           system("#{ed} #{file}")
-          setup_terminal
+          @screen.setup_terminal
           redraw
         else
-                # 'nohup':  Make the process immune to hangups.
-                # '&':      Send it to the background.
-                # 'disown': Detach it from the shell.
-                # nohup "${FFF_OPENER:-${opener:-xdg-open}}" "$1" &>/dev/null &
-                # disown
-                op = @opener || "xdg-open"
-                @@log.debug "OPEN: #{op} FILE: #{file}"
-                # `#{op} #{file}`
+          # 'nohup':  Make the process immune to hangups.
+          # '&':      Send it to the background.
+          # 'disown': Detach it from the shell.
+          # nohup "${FFF_OPENER:-${opener:-xdg-open}}" "$1" &>/dev/null &
+          # disown
+          op = @opener || "xdg-open"
+          @@log.debug "OPEN: #{op} FILE: #{file}"
+          # `#{op} #{file}`
         end
       end
     end # open
@@ -768,10 +734,14 @@ module Fff
       # '\e7':     Save cursor position.
       # '\e[?25h': Unhide the cursor.
       # '\e[%sH':  Move cursor to bottom (cmd_line).
-      printf("\e7\e[%sH\e[?25h", @lines)
+      # printf("\e7\e[%sH\e[?25h", @lines)
+      @screen.save_cursor_position
+      @screen.move_to_bottom
+      @screen.unhide_cursor
+
       print prompt
       yn = KeyHandler.get_char
-      post_cmd_line # check if this is required
+      @screen.post_cmd_line # check if this is required
       yn =~ /[Yy]/
     end
 
@@ -780,22 +750,16 @@ module Fff
     # inc-search should be separate. getting a yes/no should be separate.
     def cmd_line(prompt)
 
-    # '\e7':     Save cursor position.
-    # '\e[?25h': Unhide the cursor.
-    # '\e[%sH':  Move cursor to bottom (cmd_line).
-      printf("\e7\e[%sH\e[?25h", @lines)
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      # printf("\e7\e[%sH\e[?25h", @lines)
+      @screen.save_cursor_position
+      @screen.move_to_bottom
+      @screen.unhide_cursor
+
       reply = Readline.readline(prompt, true)
       reply
-    end
-    def post_cmd_line
-        # '\e[%sH':  Move cursor back to cmd-line.
-        # '\e[?25h': Unhide the cursor.
-        printf("\e[%sH\e[?25h", @lines)
-
-        # '\e[2K':   Clear the entire cmd_line on finish.
-        # '\e[?25l': Hide the cursor.
-        # '\e8':     Restore cursor position.
-        printf "\e[2K\e[?25l\e8"
     end
 
     def handle_key(key)
@@ -829,23 +793,23 @@ module Fff
           status_line
         end
       when "UP", "k"
-            # '\e[1L': Insert a line above the cursor.
-            # '\e[A':  Move cursor up a line.
-            if (@scroll > 0)
-              @scroll -= 1
+        # '\e[1L': Insert a line above the cursor.
+        # '\e[A':  Move cursor up a line.
+        if (@scroll > 0)
+          @scroll -= 1
 
-              print_line @scroll + 1
+          print_line @scroll + 1
 
-              if @y < 2
-                print "\e[L"
-              else
-                print "\e[A"
-                @y -= 1
-              end
+          if @y < 2
+            print "\e[L"
+          else
+            print "\e[A"
+            @y -= 1
+          end
 
-              print_line @scroll
-              status_line
-            end
+          print_line @scroll
+          status_line
+        end
 
       when "g"
         # Go to top.
@@ -890,7 +854,7 @@ module Fff
         @list_total = @list.size - 1
         @scroll = 0
         redraw
-        post_cmd_line
+        @screen.post_cmd_line
 
 
         # If the search came up empty, redraw the current dir.
@@ -919,7 +883,7 @@ module Fff
           # check write access in this dir TODO
 
           # clear_screen
-          reset_terminal
+          @screen.reset_terminal
 
           system("stty echo")
           # what abuot escaping the files Shellwords ??? TODO FIXME
@@ -933,7 +897,7 @@ module Fff
 
           marked_files_clear
 
-          setup_terminal
+          @screen.setup_terminal
           redraw true
         end # if
 
@@ -952,7 +916,7 @@ module Fff
         # these are bookmarks for directories. Go to bookmark
       when /[1-9]/
         fave = ENV["FFF_FAV#{key}"]?
-        open fave if fave
+          open fave if fave
 
         # goto previous dir
       when "-"
@@ -970,53 +934,53 @@ module Fff
         open dir if File.directory?(dir)
 
         # create a file
-      when "f"
-        file = cmd_line "File to create: "
-        # check if exists and writable
-        return unless file
-        return if File.exists? file
-        # return unless File.writable? file
-        @@log.debug "creating file: #{file}"
-        FileUtils.touch file
-        redraw true
+        when "f"
+          file = cmd_line "File to create: "
+          # check if exists and writable
+          return unless file
+          return if File.exists? file
+          # return unless File.writable? file
+          @@log.debug "creating file: #{file}"
+          FileUtils.touch file
+          redraw true
 
-        # create a dir
-      when "n"
-        dir = cmd_line "Mkdir: "
-        return unless dir
-        return if File.exists? dir
-        @@log.debug "creating dir: #{dir}"
-        FileUtils.mkdir_p dir
-        redraw true
+          # create a dir
+        when "n"
+          dir = cmd_line "Mkdir: "
+          return unless dir
+          return if File.exists? dir
+          @@log.debug "creating dir: #{dir}"
+          FileUtils.mkdir_p dir
+          redraw true
 
 
-        # rename a file
-      when "r"
-        old = @list[@scroll]
-        return unless old
-        return unless File.exists? old
+          # rename a file
+        when "r"
+          old = @list[@scroll]
+          return unless old
+          return unless File.exists? old
 
-        newname = cmd_line "Rename #{@list[@scroll]}: "
+          newname = cmd_line "Rename #{@list[@scroll]}: "
 
-        return unless newname
-        return if newname == ""
-        return unless File.writable? newname
+          return unless newname
+          return if newname == ""
+          return unless File.writable? newname
 
-        File.rename old, newname
-        redraw true
+          File.rename old, newname
+          redraw true
 
-        # edit a file
-      when "e"
-        file = @list[@scroll]
-        return unless file
-        return unless File.exists? file
+          # edit a file
+        when "e"
+          file = @list[@scroll]
+          return unless file
+          return unless File.exists? file
 
-        ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
-        system("#{ed} #{file}")
-        setup_terminal
-        redraw
+          ed = ENV["VISUAL"]? || ENV["EDITOR"]? || "vi"
+          system("#{ed} #{file}")
+          @screen.setup_terminal
+          redraw
 
-      end
+        end
     end
 
 
@@ -1024,10 +988,11 @@ module Fff
     def incsearch
       buff = ""
       pwd = Dir.current
-      # '\e7':     Save cursor position.
-      # '\e[?25h': Unhide the cursor.
-      # '\e[%sH':  Move cursor to bottom (cmd_line).
-      printf "\e7\e[%sH\e[?25h", @lines
+
+      @screen.save_cursor_position
+      @screen.move_to_bottom
+      @screen.unhide_cursor
+
 
       loop do
         printf "\r\e[K/#{buff}"
@@ -1037,9 +1002,8 @@ module Fff
         if ch == "ENTER"
           # if only one result and it's a directory, then enter should open it.
           if @list_total == 0 && File.directory?(@list[0])
-            # '\e[?25l': Hide the cursor.
-            printf "\e[?25l"
 
+            @screen.hide_cursor
             open @list.first
 
             @search_end_early = true
@@ -1068,7 +1032,9 @@ module Fff
 
         # '\e[%sH':  Move cursor back to cmd-line.
         # '\e[?25h': Unhide the cursor.
-        printf "\e[%sH\e[?25h", @lines
+        # printf "\e[%sH\e[?25h", @lines
+        @screen.move_to_bottom
+        @screen.unhide_cursor
       end
 
       # '\e[2K':   Clear the entire cmd_line on finish.
@@ -1079,25 +1045,25 @@ module Fff
 
     def main(argv)
       Signal::INT.trap do
-        reset_terminal
+        @screen.reset_terminal
         exit
       end
 
-      at_exit{ reset_terminal }
+      at_exit{ @screen.reset_terminal }
 
       # Trap the window resize signal (handle window resize events).
       # trap 'get_term_size; redraw' WINCH
       Signal::WINCH.trap do
-        get_term_size
+        @screen.get_term_size
         redraw
       end
 
       get_ls_colors
       get_os
-      get_term_size
+      # @screen.get_term_size
       # get_w3m_path
       setup_options
-      setup_terminal
+      @screen.setup_terminal
       redraw true
 
       # Vintage infinite loop.
