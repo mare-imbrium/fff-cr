@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-15 15:48
+#  Last update: 2019-05-15 22:48
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -57,6 +57,7 @@ module Fff
       @match_hidden    = false
       @oldpwd          = ""
       @y               = 0
+      @long_listing    = false
 
     end
 
@@ -238,12 +239,24 @@ module Fff
       # Escape the directory string.
       # Remove all non-printable characters.
       file_name = File.basename(file)
-      file_name = file_name.gsub(/[^[:print:]]/, "?")
-
-      printf("\r%s%s\e[m\r", \
-             "#{@file_pre}#{format}", \
-             "#{file_name}#{suffix}#{@file_post}")
-      # printf("\r%s\r", file_name)
+      if @long_listing
+        details = format_long_list(file_name)
+        file_name = file_name.gsub(/[^[:print:]]/, "?")
+        printf("\r%s%s\e[m\r", \
+               "#{@file_pre}#{format}", \
+               "#{details}#{suffix}#{@file_post}")
+      else
+        file_name = file_name.gsub(/[^[:print:]]/, "?")
+        printf("\r%s%s\e[m\r", \
+               "#{@file_pre}#{format}", \
+               "#{file_name}#{suffix}#{@file_post}")
+        # printf("\r%s\r", file_name)
+      end
+    end
+    # fix for symlinks esp bad ones
+    def format_long_list(file_name)
+      stat = File.info(file_name)
+      "%s %8d %s" % [stat.modification_time.to_local , stat.size, file_name]
     end
 
     def draw_dir
@@ -318,7 +331,7 @@ module Fff
     # So we have to create an array and append nils to it.
     def marked_files_clear
       @marked_files.clear
-      @list_total.times { @marked_files.push nil }
+      @list.size.times { @marked_files.push nil }
     end
 
     def mark(index, operation)
@@ -336,7 +349,6 @@ module Fff
 
         if index == -1 # -1 means "all"
           if @marked_files.compact.size != @list.size
-            # @marked_files = @list.as(Array(String|Nil))
             @marked_files.clear
             @marked_files.concat @list
             @mark_dir     = Dir.current
@@ -389,8 +401,9 @@ module Fff
         # from conflicting with commands named "trash".
         # command "$FFF_TRASH_CMD" "${@:1:$#-1}"
         # last is dot so we reject it
-        @@log.debug "trash: #{@fff_trash_command} :: #{files[0..-2]}"
-        system("#{@fff_trash_command} #{files[0..-2]}")
+        @@log.debug "trash: #{@fff_trash_command} :: #{files}"
+        file_as_string = files.join(" ")
+        system("#{@fff_trash_command} #{file_as_string}")
 
       else
         # this is for haiku
@@ -690,7 +703,9 @@ module Fff
           system("#{ed} #{file}")
           @screen.setup_terminal
           redraw
-
+        when "v"
+          @long_listing = !@long_listing
+          redraw
         end
     end
 
