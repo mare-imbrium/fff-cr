@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-15 14:26
+#  Last update: 2019-05-15 15:44
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -27,61 +27,7 @@ module Fff
 
   class Colorparser
     def initialize
-      # This hash contains colors for file patterns, updated from LS_COLORS
-      @ls_pattern = {} of String => String
-
-      # This hash contains colors for file types, updated from LS_COLORS
-      # Default values in absence of LS_COLORS
-      # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
-      # Pipe, Socket and Unknown https://crystal-lang.org/api/0.28.0/File/Type.html
-      @ls_ftype = {
-        "Directory" => BLUE,
-        "Symlink"   => "\e[01;36m",
-        "mi"        => "\e[01;31;7m",
-        "or"        => "\e[40;31;01m",
-        "ex"        => "\e[01;32m",
-      }
-
-      # contains colors for various extensions. Key contains dot (.txt)
-      @ls_colors = {} of String => String
-      @lsp       = ""  # string containing concatenated patterns
-    end
-
-  end
-
-  class Filer
-
-    @@log = Logger.new(io: File.new(File.expand_path("~/tmp/fff.log"), "w"))
-    @@log.level = Logger::DEBUG
-    @@log.info "========== fff    started ================= ----------"
-
-
-    def initialize
-      @max_items       = 0
-      @screen          = Screen.new
-      @max_items       = @screen.max_items
-      @list            = [] of String
-      @cur_list        = [] of String
-      @scroll          = 0
-      @list_total      = 0
-      @marked_files    = [] of (String|Nil)
-      @mark_dir        = ""
-      @opener          = "open"
-      @file_program    = ""
-      @file_flags      = "bIL"
-      @file_pre        = ""
-      @file_post       = ""
-      @mark_pre        = nil
-      @mark_post       = nil
       @fff_ls_colors   = false
-      @fff_trash_command   = nil
-      @fff_trash       = ""
-      @previous_index  = 0
-      @find_previous   = false
-      @match_hidden    = false
-      @oldpwd          = ""
-      @y               = 0
-
       # This hash contains colors for file patterns, updated from LS_COLORS
       @ls_pattern = {} of String => String
 
@@ -101,67 +47,6 @@ module Fff
       @ls_colors = {} of String => String
       @lsp       = ""  # string containing concatenated patterns
     end
-
-    def get_os
-      # ostype = ENV["OSTYPE"]?  # comes nil
-      ostype = `uname`
-      case ostype
-      when /Darwin/
-        @@log.debug "darwin"
-        @opener     = "open"
-        @file_flags = "bIL"
-        @@log.debug "ED: #{ENV["EDITOR"]?}"
-        @@log.debug "PAGER: #{ENV["PAGER"]?}"
-        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "rmtrash"
-        # puts "keys: #{ENV.keys.join("\n")}"
-        # we will be moving to some dir, not using trash
-      when "haiku"
-        # XXX UNTESTED
-        @opener = "open"
-        # set trash command and dir
-        @@log.debug "Haiku"
-        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "trash"
-      else
-        # XXX UNTESTED
-        @@log.debug "Else shouldn't linux be taken care of ??"
-        @@log.debug ostype
-      end
-    end
-
-
-
-
-    def setup_options
-      # Some options require some setup.
-      # This function is called once on open to parse
-      # select options so the operation isn't repeated
-      # multiple times in the code.
-
-      # check if this variable contains %f which represents file.
-      # anything prior to %f is pre and anything after is post.
-
-      # Format for normal files.
-      var = ENV["FFF_FILE_FORMAT"]?
-        if var
-          match = var.match(/\(.*\)%f\(.*\)/)
-          if match
-            @file_pre = match[0]? || ""
-            @file_post = match[1]? || ""
-          end
-      end
-
-      # Format for marked files.
-      var = ENV["FFF_MARK_FORMAT"]?
-        if var
-          match = var.match(/\(.*\)%f\(.*\)/)
-          if match
-            @mark_pre = match[0]? || ""
-            @mark_post = match[0]? || ""
-          end
-      end
-
-    end
-
 
     def get_ls_colors
       # Parse the LS_COLORS variable and declare each file type
@@ -228,9 +113,189 @@ module Fff
         end
       end
       @lsp = @ls_pattern.keys.join('|')
-      # @@log.debug "LSP is #{@lsp}"
-      # @@log.debug "LS_COLORS is #{@ls_colors}"
     end
+
+    def color_for(file)
+      file_ext = File.extname(file)
+      format = ""
+      suffix = ""
+
+      ftype = ""
+      # check otherwise deadlinks crash 'info'
+      if File.exists?(file)
+        ftype = File.info(file).type.to_s # it was File::Type thus not matching
+      end
+      # Directory.
+      if File.directory?(file)
+        color2 = ENV["FFF_COL1"]? || "2"
+        color = @ls_ftype["Directory"]? || "\e[1;3#{color2}m"
+        format = color
+        suffix = "/"
+
+      elsif ftype == "BlockDevice"
+        # Block special file.
+        color = @ls_ftype[ftype]? || "\e[40;33;01m"
+        format = color
+
+      elsif ftype == "CharacterDevice"
+        # Character special file.
+        color = @ls_ftype[ftype]? || "\e[40;33;01m"
+        # format = "\e[#{color}m"
+        format = color
+
+      elsif File.executable?(file)
+        # Executable file.
+        color = @ls_ftype["ex"]? || "\e[01;32m"
+        # format = "\e[#{color}m"
+        format = color
+
+      elsif File.symlink?(file) && !File.exists?(file)
+        # Symbolic Link (broken).
+        color = @ls_ftype["mi"]? || "\e[01;31;7m"
+        # format = "\e[#{color}m"
+        format = color
+
+      elsif File.symlink?(file)
+        # Symbolic Link.
+        color = @ls_ftype["Symlink"]? || "\e[01;36m"
+        # format = "\e[#{color}m"
+        format = color
+
+        # Fifo file.
+      elsif ftype == "Pipe"
+        color = @ls_ftype[ftype]? || "\e[40;33m"
+        # format = "\e[#{color}m"
+        format = color
+
+      elsif ftype == "Socket"
+        # Socket file.
+        color = @ls_ftype[ftype]? || "\e[01;35m"
+        # format = "\e[#{color}m"
+        format = color
+
+      elsif @fff_ls_colors && !@ls_pattern.empty? && file.match(/#{@lsp}/)
+        # found a file pattern
+        @ls_pattern.each do |k, v|
+          if /#{k}/.match(file)
+            # @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
+            format = v
+            # @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
+            break
+          end
+        end
+      elsif @fff_ls_colors && !@ls_colors.empty? && file_ext != "" && @ls_colors[file_ext]?
+        # found a color for that file extension
+        format = @ls_colors[file_ext]
+        # @@log.debug "color for extn: #{file_ext} is #{format.sub(";",":")}"
+      else
+        # case of File or fi
+        color = @ls_ftype[ftype]? || "\e[37m"
+        # format = "\e[#{color}m"
+        format = color
+
+      end
+      # { format: format, suffix: suffix }
+      { format, suffix }
+      end
+
+  end
+
+  class Filer
+
+    @@log = Logger.new(io: File.new(File.expand_path("~/tmp/fff.log"), "w"))
+    @@log.level = Logger::DEBUG
+    @@log.info "========== fff    started ================= ----------"
+
+
+    def initialize
+      @max_items       = 0
+      @screen          = Screen.new
+      @max_items       = @screen.max_items
+      @cp              = Colorparser.new
+      @list            = [] of String
+      @cur_list        = [] of String
+      @scroll          = 0
+      @list_total      = 0
+      @marked_files    = [] of (String|Nil)
+      @mark_dir        = ""
+      @opener          = "open"
+      @file_program    = ""
+      @file_flags      = "bIL"
+      @file_pre        = ""
+      @file_post       = ""
+      @mark_pre        = nil
+      @mark_post       = nil
+      @fff_trash_command   = nil
+      @fff_trash       = ""
+      @previous_index  = 0
+      @find_previous   = false
+      @match_hidden    = false
+      @oldpwd          = ""
+      @y               = 0
+
+    end
+
+    def get_os
+      # ostype = ENV["OSTYPE"]?  # comes nil
+      ostype = `uname`
+      case ostype
+      when /Darwin/
+        @@log.debug "darwin"
+        @opener     = "open"
+        @file_flags = "bIL"
+        @@log.debug "ED: #{ENV["EDITOR"]?}"
+        @@log.debug "PAGER: #{ENV["PAGER"]?}"
+        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "rmtrash"
+        # puts "keys: #{ENV.keys.join("\n")}"
+        # we will be moving to some dir, not using trash
+      when "haiku"
+        # XXX UNTESTED
+        @opener = "open"
+        # set trash command and dir
+        @@log.debug "Haiku"
+        @fff_trash_command = ENV["FFF_TRASH_CMD"]? || "trash"
+      else
+        # XXX UNTESTED
+        @@log.debug "Else shouldn't linux be taken care of ??"
+        @@log.debug ostype
+      end
+    end
+
+
+
+
+    def setup_options
+      # Some options require some setup.
+      # This function is called once on open to parse
+      # select options so the operation isn't repeated
+      # multiple times in the code.
+
+      # check if this variable contains %f which represents file.
+      # anything prior to %f is pre and anything after is post.
+
+      # Format for normal files.
+      var = ENV["FFF_FILE_FORMAT"]?
+        if var
+          match = var.match(/\(.*\)%f\(.*\)/)
+          if match
+            @file_pre = match[0]? || ""
+            @file_post = match[1]? || ""
+          end
+      end
+
+      # Format for marked files.
+      var = ENV["FFF_MARK_FORMAT"]?
+        if var
+          match = var.match(/\(.*\)%f\(.*\)/)
+          if match
+            @mark_pre = match[0]? || ""
+            @mark_post = match[0]? || ""
+          end
+      end
+
+    end
+
+
 
     def get_mime_type(file)
       # Get a file's mime_type.
@@ -321,86 +386,8 @@ module Fff
           printf("\r#{REVERSE}%s\e[m\r", "empty")
         return
       end
+      format, suffix = @cp.color_for(file)
 
-      file_name = File.basename(file)
-      file_ext = File.extname(file_name)
-      format = ""
-      suffix = ""
-
-      ftype = ""
-      # check otherwise deadlinks crash 'info'
-      if File.exists?(file)
-        ftype = File.info(file).type.to_s # it was File::Type thus not matching
-      end
-      # Directory.
-      if File.directory?(file)
-        color2 = ENV["FFF_COL1"]? || "2"
-        color = @ls_ftype["Directory"]? || "\e[1;3#{color2}m"
-        format = color
-        suffix = "/"
-
-      elsif ftype == "BlockDevice"
-        # Block special file.
-        color = @ls_ftype[ftype]? || "\e[40;33;01m"
-        format = color
-
-      elsif ftype == "CharacterDevice"
-        # Character special file.
-        color = @ls_ftype[ftype]? || "\e[40;33;01m"
-        # format = "\e[#{color}m"
-        format = color
-
-      elsif File.executable?(file)
-        # Executable file.
-        color = @ls_ftype["ex"]? || "\e[01;32m"
-        # format = "\e[#{color}m"
-        format = color
-
-      elsif File.symlink?(file) && !File.exists?(file)
-        # Symbolic Link (broken).
-        color = @ls_ftype["mi"]? || "\e[01;31;7m"
-        # format = "\e[#{color}m"
-        format = color
-
-      elsif File.symlink?(file)
-        # Symbolic Link.
-        color = @ls_ftype["Symlink"]? || "\e[01;36m"
-        # format = "\e[#{color}m"
-        format = color
-
-        # Fifo file.
-      elsif ftype == "Pipe"
-        color = @ls_ftype[ftype]? || "\e[40;33m"
-        # format = "\e[#{color}m"
-        format = color
-
-      elsif ftype == "Socket"
-        # Socket file.
-        color = @ls_ftype[ftype]? || "\e[01;35m"
-        # format = "\e[#{color}m"
-        format = color
-
-      elsif @fff_ls_colors && !@ls_pattern.empty? && file.match(/#{@lsp}/)
-        # found a file pattern
-        @ls_pattern.each do |k, v|
-          if /#{k}/.match(file)
-            # @@log.debug "#{file} matched #{k}. color is #{v[1..-2]}"
-            format = v
-            # @@log.debug "color for pattern:#{file} is #{format.sub(";",":")}"
-            break
-          end
-        end
-      elsif @fff_ls_colors && !@ls_colors.empty? && file_ext != "" && @ls_colors[file_ext]?
-        # found a color for that file extension
-        format = @ls_colors[file_ext]
-        # @@log.debug "color for extn: #{file_ext} is #{format.sub(";",":")}"
-      else
-        # case of File or fi
-        color = @ls_ftype[ftype]? || "\e[37m"
-        # format = "\e[#{color}m"
-        format = color
-
-      end
       # If the list item is under the cursor.
       if index == @scroll
 
@@ -425,6 +412,7 @@ module Fff
 
       # Escape the directory string.
       # Remove all non-printable characters.
+      file_name = File.basename(file)
       file_name = file_name.gsub(/[^[:print:]]/, "?")
 
       printf("\r%s%s\e[m\r", \
@@ -957,7 +945,9 @@ module Fff
         redraw
       end
 
-      get_ls_colors
+
+      # get_ls_colors
+      @cp.get_ls_colors
       get_os
       # @screen.get_term_size
       # get_w3m_path
