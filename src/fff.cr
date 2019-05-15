@@ -5,142 +5,48 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-15 11:07
+#  Last update: 2019-05-15 14:26
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
-# - 2019-05-15 - break screen stuff into another class
+# x 2019-05-15 - break screen stuff into another class
 # - 2019-05-15 - screen should have WINCH with a block
-# - 2019-05-15 - move mark logic to another class ?
+# ? 2019-05-15 - move mark logic to another class ?
+# - 2019-05-15 - separate display from fetching of data and sorting
 
 require "readline"
 require "logger"
 require "file_utils"
 require "./keyhandler"
+require "./screen"
 
 module Fff
   VERSION = "0.3.0"
-  BLUE      = "\e[1;34m"
-  REVERSE      = "\e[7m"
+  BLUE    = "\e[1;34m"
+  REVERSE = "\e[7m"
 
-  class Screen
-
-    getter lines = 0
-    getter columns = 0
-    getter max_items = 0
-
+  class Colorparser
     def initialize
-      get_term_size
+      # This hash contains colors for file patterns, updated from LS_COLORS
+      @ls_pattern = {} of String => String
+
+      # This hash contains colors for file types, updated from LS_COLORS
+      # Default values in absence of LS_COLORS
+      # crystal sends Directory, with initcaps, Symlink, CharacterDevice, BlockDevice
+      # Pipe, Socket and Unknown https://crystal-lang.org/api/0.28.0/File/Type.html
+      @ls_ftype = {
+        "Directory" => BLUE,
+        "Symlink"   => "\e[01;36m",
+        "mi"        => "\e[01;31;7m",
+        "or"        => "\e[40;31;01m",
+        "ex"        => "\e[01;32m",
+      }
+
+      # contains colors for various extensions. Key contains dot (.txt)
+      @ls_colors = {} of String => String
+      @lsp       = ""  # string containing concatenated patterns
     end
 
-    def get_term_size
-      # Get terminal size ('stty' is POSIX and always available).
-      # This can't be done reliably across all bash versions in pure bash.
-      l, c = `stty size`.split(" ") #.map{ |e| e.to_i }
-      @lines = l.to_i
-      @columns = c.to_i
-
-      # Max list items that fit in the scroll area.
-      # This may change with caller, but needs to be recalculated whenever
-      # screen size changes
-      @max_items = @lines - 3
-    end
-    def clear_screen
-      # Only clear the scrolling window (dir item list).
-      # '\e[%sH':    Move cursor to bottom of scroll area.
-      # '\e[9999C':  Move cursor to right edge of the terminal.
-      # '\e[1J':     Clear screen to top left corner (from cursor up).
-      # '\e[2J':     Clear screen fully (if using tmux) (fixes clear issues).
-      # '\e[1;%sr':  Clearing the screen resets the scroll region(?). Re-set it.
-      #              Also sets cursor to (0,0).
-      ## if TMUX has a value then use clear
-      ## if TMUX is blank, then return blank
-
-      printf("\e[%sH\e[9999C\e[1J\e[1;%sr",
-        @lines-2,
-        @max_items      )
-    end
-    def setup_terminal
-      # Setup the terminal for the TUI.
-      # '\e[?1049h': Use alternative screen buffer.
-      # '\e[?7l':    Disable line wrapping.
-      # '\e[?25l':   Hide the cursor.
-      # '\e[2J':     Clear the screen.
-      # '\e[1;Nr':   Limit scrolling to scrolling area.
-      #              Also sets cursor to (0,0).
-      # printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
-      printf("\e[?1049h\e[?7l\e[?25l\e[2J\e[1;%sr", @max_items)
-      # Hide echoing of user input
-      system("stty -echo")
-    end
-
-    def reset_terminal
-      # Reset the terminal to a useable state (undo all changes).
-      # '\e[?7h':   Re-enable line wrapping.
-      # '\e[?25h':  Unhide the cursor.
-      # '\e[2J':    Clear the terminal.
-      # '\e[;r':    Set the scroll region to its default value.
-      #             Also sets cursor to (0,0).
-      # '\e[?1049l: Restore main screen buffer.
-      print("\e[?7h\e[?25h\e[2J\e[;r\e[?1049l")
-
-      # Show user input.
-      system("stty echo")
-    end
-    def post_cmd_line
-        # '\e[%sH':  Move cursor back to cmd-line.
-        # '\e[?25h': Unhide the cursor.
-        printf("\e[%sH\e[?25h", @lines)
-
-        # '\e[2K':   Clear the entire cmd_line on finish.
-        # '\e[?25l': Hide the cursor.
-        # '\e8':     Restore cursor position.
-        printf "\e[2K\e[?25l\e8"
-    end
-
-    def move_to_bottom
-      # '\e7':     Save cursor position.
-      # '\e[?25h': Unhide the cursor.
-      # '\e[%sH':  Move cursor to bottom (cmd_line).
-      # printf("\e7\e[%sH\e[?25h", @lines)
-      printf("\e[%sH", @lines)
-    end
-
-    def status_line(color, text)
-      # '\e7':       Save cursor position.
-      #              This is more widely supported than '\e[s'.
-      # '\e[%sH':    Move cursor to bottom of the terminal.
-      # '\e[30;41m': Set foreground and background colors.
-      # '%*s':       Insert enough spaces to fill the screen width.
-      #              This sets the background color to the whole line
-      #              and fixes issues in 'screen' where '\e[K' doesn't work.
-      # '\r':        Move cursor back to column 0 (was at EOL due to above).
-      # '\e[m':      Reset text formatting.
-      # '\e[H\e[K':  Clear line below status_line.
-      # '\e8':       Restore cursor position.
-      #              This is more widely supported than '\e[u'.
-      printf "\e7\e[%sH\e[30;4%sm%*s\r%s\e[m\e[%sH\e[K\e8", \
-        @lines-1, \
-        color, \
-        @columns, " ", \
-        text, \
-        @lines
-    end
-    def reset_cursor_position
-      printf "\e[H"
-    end
-    def unhide_cursor
-      printf "\e[?25h"
-    end
-    def hide_cursor
-      printf "\e[?25l"
-    end
-    def save_cursor_position
-      printf "\e7"
-    end
-    def restore_cursor_position
-      printf "\e8"
-    end
   end
 
   class Filer
@@ -151,10 +57,8 @@ module Fff
 
 
     def initialize
-      # @lines           = 0
-      # @columns         = 0
       @max_items       = 0
-      @screen           = Screen.new
+      @screen          = Screen.new
       @max_items       = @screen.max_items
       @list            = [] of String
       @cur_list        = [] of String
@@ -369,15 +273,11 @@ module Fff
       # If '$PWD' is '/', unset it to avoid '//'.
       pwd = "" if pwd == "/"
 
-      @@log.debug "read_dir mh: #{@match_hidden}"
-      # entries = Dir.glob("*", match_hidden: @match_hidden)
       entries = Dir.glob(pwd + "/*") #, match_hidden: false)
       # WHY does fff use full filenames in listing?
       # because when we move a file, we need full name
-      # entries = Dir.glob("*") #, match_hidden: false)
 
       unless @match_hidden
-        # this will not work if full filenames
         entries = entries.reject{|f| File.basename(f).starts_with?('.')}
       end
 
@@ -416,6 +316,7 @@ module Fff
         return unless file
 
       # how to check for that empty item ??? XXX FIXME
+      # there could actually be a file by that name
       if @list[0] == "empty" && !@list[1]?
           printf("\r#{REVERSE}%s\e[m\r", "empty")
         return
@@ -564,9 +465,6 @@ module Fff
         scroll_end      =  scroll_start  +  @max_items
         scroll_new_pos  =  @max_items/2  +  1
       end
-      # @@log.debug "scroll_start: #{scroll_start}"
-      # @@log.debug "scroll_end:   #{scroll_end}"
-
 
       # Reset cursor position.
       @screen.reset_cursor_position
@@ -623,7 +521,7 @@ module Fff
       # Don't allow the user to mark the empty directory list item.
       return if @list[0] == "empty" && !@list[1]?
 
-        if index == -1
+        if index == -1 # -1 means "all"
           if @marked_files.compact.size != @list.size
             # @marked_files = @list.as(Array(String|Nil))
             @marked_files.clear
@@ -643,7 +541,7 @@ module Fff
         end
 
         # Clear line before changing it.
-        print "\e[K"
+        @screen.clear_line
         print_line index
       end
 
@@ -778,7 +676,6 @@ module Fff
         elsif pwd && pwd != "/"
           @find_previous = true
           dir =  File.expand_path("..")
-          @@log.debug " LEFT opening #{dir}"
           @oldpwd = pwd
           open dir
         end
@@ -801,9 +698,10 @@ module Fff
           print_line @scroll + 1
 
           if @y < 2
-            print "\e[L"
+            # print "\e[L"
+            @screen.insert_line_above
           else
-            print "\e[A"
+            @screen.move_cursor_up
             @y -= 1
           end
 
@@ -1055,6 +953,7 @@ module Fff
       # trap 'get_term_size; redraw' WINCH
       Signal::WINCH.trap do
         @screen.get_term_size
+        @max_items = @screen.max_items
         redraw
       end
 
