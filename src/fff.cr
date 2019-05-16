@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-15 22:48
+#  Last update: 2019-05-16 08:35
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -171,6 +171,7 @@ module Fff
       unless @match_hidden
         entries = entries.reject{|f| File.basename(f).starts_with?('.')}
       end
+      entries = entries.sort
 
       entries.each do |item|
         if File.directory?(item)
@@ -256,7 +257,7 @@ module Fff
     # fix for symlinks esp bad ones
     def format_long_list(file_name)
       stat = File.info(file_name)
-      "%s %8d %s" % [stat.modification_time.to_local , stat.size, file_name]
+      "%s %8d %s" % [stat.modification_time.to_local.to_s("%Y:%m:%d %H:%M") , stat.size, file_name]
     end
 
     def draw_dir
