@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-16 11:28
+#  Last update: 2019-05-16 15:07
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -25,6 +25,46 @@ module Fff
   VERSION = "0.3.0"
   REVERSE = "\e[7m"
 
+  class Selection
+    getter marked_files = [] of String
+    def initialize
+      # @marked_files = [] of String
+      @marked_dir   = ""
+    end
+    def size
+      @marked_files.size
+    end
+    def clear
+      @marked_files.clear
+      @marked_dir = Dir.current
+    end
+    def marked?(file)
+      @marked_files.includes?(file)
+    end
+    def mark(file)
+      clear if @marked_dir != Dir.current
+
+      @marked_files.push(file)
+      @marked_dir = Dir.current
+    end
+    def mark(files : Array(String))
+      clear if @marked_dir != Dir.current
+
+      @marked_files.concat(files)
+    end
+    def toggle(file)
+      if marked? file
+        unmark file
+      else
+        mark(file)
+      end
+    end
+    def unmark(file)
+      @marked_files.delete(file)
+    end
+
+  end
+
   class Filer
 
     @@log = Logger.new(io: File.new(File.expand_path("~/tmp/fff.log"), "w"))
@@ -35,13 +75,15 @@ module Fff
     def initialize
       @max_items       = 0
       @screen          = Screen.new
+      # @marked_dir = Dir.current
       @max_items       = @screen.max_items
       @cp              = Colorparser.new
+      @sel             = Selection.new
       @list            = [] of String
       @cur_list        = [] of String
       @scroll          = 0
       @list_total      = 0
-      @marked_files    = [] of (String|Nil)
+      # @marked_files    = [] of (String|Nil)
       @mark_dir        = ""
       @opener          = "open"
       @file_program    = ""   # uses external programs for move and copy and link
@@ -136,14 +178,14 @@ module Fff
 
       # in fff, file_program was an array with the command and params
       #  which was displayed with '*' and executed with '@' naturally.
-      mark_ui = "[#{@marked_files.compact.size}] selected (#{@file_program}) [p] ->"
+      mark_ui = "[#{@sel.size}] selected (#{@file_program}) [p] ->"
 
       # Escape the directory string.
       # Remove all non-printable characters.
       # @pwd_escaped = "${PWD//[^[:print:]]/^[}"
       pwd_escaped = Dir.current.gsub(/[^[:print:]]/, "?")
 
-      ui = @marked_files.compact.size == 0 ? "" : mark_ui
+      ui = @sel.size == 0 ? "" : mark_ui
 
       fname = filename || pwd_escaped
 
@@ -200,8 +242,8 @@ module Fff
       # since fff returns earlier if blank.
 
       # if marked_files is empty we should not check
-      mf = @marked_files[index]? || "null"
-      if mf == file
+      # mf = @marked_files[index]? || "null"
+      if @sel.marked? file
         @mark_pre ||= ""
         @mark_post ||= "*"
         suffix = @mark_post
@@ -213,7 +255,7 @@ module Fff
       # Remove all non-printable characters.
       file_name = File.basename(file)
       if @long_listing
-        details = format_long_list(file_name)
+        details = Directory.format_long_list(file_name)
         file_name = file_name.gsub(/[^[:print:]]/, "?")
         printf("\r%s%s\e[m\r", \
                "#{@file_pre}#{format}", \
@@ -296,9 +338,9 @@ module Fff
     # Bash lets you place an item in any index, wherease crystal will give an error.
     # So we have to create an array and append nils to it.
     def marked_files_clear
-      @marked_files.clear
-      @mark_dir = Dir.current
-      @list.size.times { @marked_files.push nil }
+      @sel.clear
+      # @mark_dir = Dir.current
+      # @list.size.times { @marked_files.push nil }
     end
 
     # mark a file for delete/move/copy.
@@ -310,30 +352,23 @@ module Fff
       # clear the marked files.
       # NOTE: `fff` puts values in any index of the array but Crystal will given an OOBE
       # so we cannot mimick that logic here. I have inserted nils in the array
-      if Dir.current != @mark_dir
-        marked_files_clear
-      end
+      # if Dir.current != @mark_dir
+        # marked_files_clear
+      # end
 
       # Don't allow the user to mark the empty directory list item.
       return if @list[0] == "empty" && !@list[1]?
 
         if index == -1 # -1 means "all"
-          if @marked_files.compact.size != @list.size
-            @marked_files.clear
-            @marked_files.concat @list
-            @mark_dir     = Dir.current
-          else
-            marked_files_clear
+          marked_files_clear
+          if @sel.size != @list.size
+            @sel.mark @list
           end
 
           redraw
       else
-        if @marked_files[index] == @list[index]
-          @marked_files[@scroll] = nil
-        else
-          @marked_files[index] = @list[index]
-          @mark_dir = Dir.current
-        end
+        file = @list[index]
+        @sel.toggle(file)
 
         # Clear line before changing it.
         @screen.clear_line
@@ -357,14 +392,14 @@ module Fff
                       else
                         ""
                       end
-      @@log.debug "fileprogram is: #{@file_program}"
+      @@log.debug "fileprogram is: #{@file_program}, #{@sel.size}"
 
       status_line
     end
 
 
     def trash(files)
-      tf = @screen.confirm "trash [#{@marked_files.compact.size}] items? [y/n]: "
+      tf = @screen.confirm "trash [#{@sel.size}] items? [y/n]: "
 
       return unless tf
 
@@ -544,7 +579,7 @@ module Fff
 
         # Do the file operation. PASTE paste
       when "p"
-        if @marked_files.compact.size > 0
+        if @sel.size > 0
           # check write access in this dir TODO
 
           # clear_screen
@@ -552,8 +587,8 @@ module Fff
 
           system("stty echo")
           # what abuot escaping the files Shellwords ??? TODO FIXME
-          @@log.debug "PASTE: #{@file_program}: #{@marked_files.compact}"
-          files = @marked_files.compact
+          @@log.debug "PASTE: #{@file_program}: #{@sel.marked_files}"
+          files = @sel.marked_files
           case @operation
           when /[yY]/
             FileUtils.cp(files, ".")
@@ -581,7 +616,7 @@ module Fff
 
       when "c"
         # Clear all marked files.
-        if @marked_files.compact.size > 0
+        if @sel.size > 0
           marked_files_clear
           redraw
         end
