@@ -1,3 +1,4 @@
+require "readline"
 class Screen
 
   getter lines = 0
@@ -125,4 +126,37 @@ class Screen
   def insert_line_above
     print "\e[L"
   end
+    # Confirm action, return true or false.
+    # True returned if Y or y pressed.
+    def confirm(prompt)
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      # printf("\e7\e[%sH\e[?25h", @lines)
+      save_cursor_position
+      move_to_bottom
+      unhide_cursor
+
+      print prompt
+      yn = KeyHandler.get_char
+      post_cmd_line # check if this is required
+      yn =~ /[Yy]/
+    end
+
+    # The original cmd_line takes variable arguments and has different processing
+    # for different cases. I have simplified it here.
+    # inc-search should be separate. getting a yes/no should be separate.
+    def cmd_line(prompt)
+
+      # '\e7':     Save cursor position.
+      # '\e[?25h': Unhide the cursor.
+      # '\e[%sH':  Move cursor to bottom (cmd_line).
+      # printf("\e7\e[%sH\e[?25h", @lines)
+      save_cursor_position
+      move_to_bottom
+      unhide_cursor
+
+      reply = Readline.readline(prompt, true)
+      reply
+    end
 end
