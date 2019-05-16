@@ -33,7 +33,7 @@ class Directory
     list
   end
 
-  def format_long_list(file_name)
+  def self.format_long_list(file_name)
     stat = if File.exists?(file_name)
              File.info(file_name)
            else
