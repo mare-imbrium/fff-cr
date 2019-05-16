@@ -5,14 +5,11 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-16 15:12
+#  Last update: 2019-05-16 18:30
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
-# x 2019-05-15 - break screen stuff into another class
 # - 2019-05-15 - screen should have WINCH with a block
-# ? 2019-05-15 - move mark logic to another class ?
-# - 2019-05-15 - separate display from fetching of data and sorting
 
 require "logger"
 require "file_utils"
@@ -44,7 +41,6 @@ module Fff
       @cur_list        = [] of String
       @scroll          = 0
       @list_total      = 0
-      # @marked_files    = [] of (String|Nil)
       @mark_dir        = ""
       @opener          = "open"
       @file_program    = ""   # uses external programs for move and copy and link
@@ -62,6 +58,7 @@ module Fff
       @oldpwd          = ""
       @y               = 0
       @long_listing    = false
+      @empty           = false
 
     end
 
@@ -127,15 +124,15 @@ module Fff
 
 
 
+    # Get a file's mime_type.
     def get_mime_type(file)
-      # Get a file's mime_type.
       flags = @file_flags || "biL"
       mime_type=`file "-#{flags}" #{file}`
       mime_type
     end
 
+    # Status_line to print when files are marked for operation.
     def status_line(filename=nil)
-      # Status_line to print when files are marked for operation.
 
       # in fff, file_program was an array with the command and params
       #  which was displayed with '*' and executed with '@' naturally.
@@ -152,17 +149,20 @@ module Fff
 
       color = ENV["FFF_COL2"]? || "1"
 
-      text = "(#{@scroll+1}/#{@list_total+1}) #{ui} #{fname}"
+      # FIXME shows 1/1 if empty
+      text = @empty ? "#{ui} #{fname}" : "(#{@scroll+1}/#{@list_total+1}) #{ui} #{fname}"
       @screen.status_line(color, text)
     end
 
     def read_dir
       @list = Directory.read_dir @match_hidden
 
-      @list.push "empty" if @list.empty?
+      # @list.push "empty" if @list.empty?
+      @empty = @list.empty?
 
       # calculate some internal variables
       @list_total = @list.size - 1
+      @list_total = 0 if @list_total < 0
 
       # use as backup if no search results
       @cur_list = @list
@@ -176,18 +176,13 @@ module Fff
     end
 
 
+    # Format the list item and print it.
+    # Index is the offset in the @list array
     def print_line(index)
-      # Format the list item and print it.
       file = @list[index]?
         # If the dir item doesn't exist, end here.
         return unless file
 
-      # how to check for that empty item ??? XXX FIXME
-      # there could actually be a file by that name
-      if @list[0] == "empty" && !@list[1]?
-          printf("\r#{REVERSE}%s\e[m\r", "empty")
-        return
-      end
       format, suffix = @cp.color_for(file)
 
       # If the list item is under the cursor.
@@ -230,8 +225,13 @@ module Fff
     end
 
 
+    # Print the max directory items that fit in the scroll area.
     def draw_dir
-      # Print the max directory items that fit in the scroll area.
+      if @empty
+        printf("\r#{REVERSE}%s\e[m\r", "empty")
+        return
+      end
+
       scroll_start = @scroll
       scroll_new_pos = 0
       scroll_end = 0
@@ -318,7 +318,8 @@ module Fff
       # end
 
       # Don't allow the user to mark the empty directory list item.
-      return if @list[0] == "empty" && !@list[1]?
+      return if @empty
+      # return if @list[0] == "empty" && !@list[1]?
 
         if index == -1 # -1 means "all"
           marked_files_clear
