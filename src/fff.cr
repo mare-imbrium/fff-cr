@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-16 08:35
+#  Last update: 2019-05-16 08:47
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -254,9 +254,14 @@ module Fff
         # printf("\r%s\r", file_name)
       end
     end
+
     # fix for symlinks esp bad ones
     def format_long_list(file_name)
-      stat = File.info(file_name)
+      stat = if File.exists?(file_name)
+               File.info(file_name)
+             else
+               File.info(file_name, follow_symlinks: false)
+             end
       "%s %8d %s" % [stat.modification_time.to_local.to_s("%Y:%m:%d %H:%M") , stat.size, file_name]
     end
 
@@ -304,15 +309,13 @@ module Fff
 
 
       # Move the cursor to its new position if it changed.
-      # If the variable 'scroll_new_pos' is empty, the cursor
-      # is moved to line '0'.
       printf("\e[%sH", scroll_new_pos)
       @y = scroll_new_pos
     end
 
+    # Redraw the current window.
+    # If 'true' is passed, re-fetch the directory list.
     def redraw(full = false)
-      # Redraw the current window.
-      # If 'full' is passed, re-fetch the directory list.
       if full
         read_dir
         @scroll = 0
@@ -323,7 +326,7 @@ module Fff
       status_line
     end
 
-    # clear marked files.
+    # Clear marked files.
     #
     # fff maintains a parallel array for marked files. However, instead of appending
     # a selected file to the marked array, it uses the same index for that file
@@ -335,6 +338,9 @@ module Fff
       @list.size.times { @marked_files.push nil }
     end
 
+    # mark a file for delete/move/copy.
+    # index is index in list array
+    # operation is delete, copy, move
     def mark(index, operation)
       # Mark file for operation.
       # If an item is marked in a second directory,
