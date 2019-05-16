@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-16 08:47
+#  Last update: 2019-05-16 11:28
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -14,12 +14,12 @@
 # ? 2019-05-15 - move mark logic to another class ?
 # - 2019-05-15 - separate display from fetching of data and sorting
 
-require "readline"
 require "logger"
 require "file_utils"
 require "./keyhandler"
 require "./screen"
 require "./colorparser"
+require "./directory"
 
 module Fff
   VERSION = "0.3.0"
@@ -44,7 +44,8 @@ module Fff
       @marked_files    = [] of (String|Nil)
       @mark_dir        = ""
       @opener          = "open"
-      @file_program    = ""
+      @file_program    = ""   # uses external programs for move and copy and link
+      @operation       = ""
       @file_flags      = "bIL"
       @file_pre        = ""
       @file_post       = ""
@@ -153,53 +154,24 @@ module Fff
     end
 
     def read_dir
-      # Read a directory to an array and sort it directories first.
-      dirs = [] of String
-      files = [] of String
-      item_index = 0
+      @list = Directory.read_dir @match_hidden
 
-      pwd = Dir.current
-      #oldpwd = ENV["OLDPWD"] # WRONG
+      @list.push "empty" if @list.empty?
 
-      # If '$PWD' is '/', unset it to avoid '//'.
-      pwd = "" if pwd == "/"
-
-      entries = Dir.glob(pwd + "/*") #, match_hidden: false)
-      # WHY does fff use full filenames in listing?
-      # because when we move a file, we need full name
-
-      unless @match_hidden
-        entries = entries.reject{|f| File.basename(f).starts_with?('.')}
-      end
-      entries = entries.sort
-
-      entries.each do |item|
-        if File.directory?(item)
-          dirs.push item
-          item_index += 1
-
-          # Find the position of the child directory in the
-          # parent directory list.
-          @previous_index = item_index if item == @oldpwd
-
-        else
-          files.push item
-        end
-      end
-      @list = dirs + files
-
-      # Indicate that the directory is empty.
-      # @list ||= ["empty"]
-      @list.push "empty" if @list && @list.empty?
-
+      # calculate some internal variables
       @list_total = @list.size - 1
 
-      marked_files_clear
-
-
-      # Save the original dir in a second list as a backup.
+      # use as backup if no search results
       @cur_list = @list
+
+      # Find the position of the child directory in the
+      # parent directory list. TODO outside
+      index = @list.index(@oldpwd)
+      if index
+        @previous_index = index + 1
+      end
     end
+
 
     def print_line(index)
       # Format the list item and print it.
@@ -251,19 +223,9 @@ module Fff
         printf("\r%s%s\e[m\r", \
                "#{@file_pre}#{format}", \
                "#{file_name}#{suffix}#{@file_post}")
-        # printf("\r%s\r", file_name)
       end
     end
 
-    # fix for symlinks esp bad ones
-    def format_long_list(file_name)
-      stat = if File.exists?(file_name)
-               File.info(file_name)
-             else
-               File.info(file_name, follow_symlinks: false)
-             end
-      "%s %8d %s" % [stat.modification_time.to_local.to_s("%Y:%m:%d %H:%M") , stat.size, file_name]
-    end
 
     def draw_dir
       # Print the max directory items that fit in the scroll area.
@@ -335,6 +297,7 @@ module Fff
     # So we have to create an array and append nils to it.
     def marked_files_clear
       @marked_files.clear
+      @mark_dir = Dir.current
       @list.size.times { @marked_files.push nil }
     end
 
@@ -376,6 +339,7 @@ module Fff
         @screen.clear_line
         print_line index
       end
+      @operation = operation
 
       # Find the program to use.
       @file_program = case operation
@@ -400,7 +364,7 @@ module Fff
 
 
     def trash(files)
-      tf = confirm "trash [#{@marked_files.compact.size}] items? [y/n]: "
+      tf = @screen.confirm "trash [#{@marked_files.compact.size}] items? [y/n]: "
 
       return unless tf
 
@@ -410,6 +374,7 @@ module Fff
         # last is dot so we reject it
         @@log.debug "trash: #{@fff_trash_command} :: #{files}"
         file_as_string = files.join(" ")
+        # TODO need to Shellwords this
         system("#{@fff_trash_command} #{file_as_string}")
 
       else
@@ -461,37 +426,6 @@ module Fff
       end
     end # open
 
-    def confirm(prompt)
-      # '\e7':     Save cursor position.
-      # '\e[?25h': Unhide the cursor.
-      # '\e[%sH':  Move cursor to bottom (cmd_line).
-      # printf("\e7\e[%sH\e[?25h", @lines)
-      @screen.save_cursor_position
-      @screen.move_to_bottom
-      @screen.unhide_cursor
-
-      print prompt
-      yn = KeyHandler.get_char
-      @screen.post_cmd_line # check if this is required
-      yn =~ /[Yy]/
-    end
-
-    # The original cmd_line takes variable arguments and has different processing
-    # for different cases. I have simplified it here.
-    # inc-search should be separate. getting a yes/no should be separate.
-    def cmd_line(prompt)
-
-      # '\e7':     Save cursor position.
-      # '\e[?25h': Unhide the cursor.
-      # '\e[%sH':  Move cursor to bottom (cmd_line).
-      # printf("\e7\e[%sH\e[?25h", @lines)
-      @screen.save_cursor_position
-      @screen.move_to_bottom
-      @screen.unhide_cursor
-
-      reply = Readline.readline(prompt, true)
-      reply
-    end
 
     def handle_key(key)
       # @@log.debug "inside handle_key with #{key}"
@@ -619,10 +553,21 @@ module Fff
           system("stty echo")
           # what abuot escaping the files Shellwords ??? TODO FIXME
           @@log.debug "PASTE: #{@file_program}: #{@marked_files.compact}"
-          if @file_program == :trash
-            trash @marked_files.compact
+          files = @marked_files.compact
+          case @operation
+          when /[yY]/
+            FileUtils.cp(files, ".")
+          when /[mM]/
+            FileUtils.mv(files, ".")
+          when /[sS]/
+            FileUtils.ln_s(files, ".")
+            # These are 'fff' functions.
+          when /[dD]/
+            trash files
+          when /[bB]/
+            "bulk_rename" # NOT IMPLEMENTED
           else
-            system("#{@file_program} #{@marked_files.compact.join(" ")} .")
+            ""
           end
           system("stty -echo")
 
@@ -630,6 +575,8 @@ module Fff
 
           @screen.setup_terminal
           redraw true
+        else
+          @@log.debug " NO MARKED FILES "
         end # if
 
       when "c"
@@ -774,6 +721,10 @@ module Fff
       # '\e[?25l': Hide the cursor.
       # '\e8':     Restore cursor position.
       printf "\e[2K\e[?25l\e8"
+    end
+
+    def cmd_line(prompt)
+      @screen.cmd_line prompt
     end
 
     def main(argv)
