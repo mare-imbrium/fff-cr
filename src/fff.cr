@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-16 18:30
+#  Last update: 2019-05-17 11:23
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -57,7 +57,7 @@ module Fff
       @match_hidden    = false
       @oldpwd          = ""
       @y               = 0
-      @long_listing    = false
+      @long_listing    = true
       @empty           = false
 
     end
@@ -90,13 +90,13 @@ module Fff
 
 
 
+    # NOTE: we can scrap setup_options
 
+    # Some options require some setup.
+    # This function is called once on open to parse
+    # select options so the operation isn't repeated
+    # multiple times in the code.
     def setup_options
-      # Some options require some setup.
-      # This function is called once on open to parse
-      # select options so the operation isn't repeated
-      # multiple times in the code.
-
       # check if this variable contains %f which represents file.
       # anything prior to %f is pre and anything after is post.
 
@@ -121,8 +121,6 @@ module Fff
       end
 
     end
-
-
 
     # Get a file's mime_type.
     def get_mime_type(file)
@@ -154,6 +152,7 @@ module Fff
       @screen.status_line(color, text)
     end
 
+    # read the current directory and populate `@list`
     def read_dir
       @list = Directory.read_dir @match_hidden
 
@@ -227,6 +226,7 @@ module Fff
 
     # Print the max directory items that fit in the scroll area.
     def draw_dir
+
       if @empty
         printf("\r#{REVERSE}%s\e[m\r", "empty")
         return
@@ -292,16 +292,8 @@ module Fff
     end
 
     # Clear marked files.
-    #
-    # fff maintains a parallel array for marked files. However, instead of appending
-    # a selected file to the marked array, it uses the same index for that file
-    # in the marked array. This means that the size of both arrays is the same.
-    # Bash lets you place an item in any index, wherease crystal will give an error.
-    # So we have to create an array and append nils to it.
     def marked_files_clear
       @sel.clear
-      # @mark_dir = Dir.current
-      # @list.size.times { @marked_files.push nil }
     end
 
     # mark a file for delete/move/copy.
@@ -311,23 +303,17 @@ module Fff
       # Mark file for operation.
       # If an item is marked in a second directory,
       # clear the marked files.
-      # NOTE: `fff` puts values in any index of the array but Crystal will given an OOBE
-      # so we cannot mimick that logic here. I have inserted nils in the array
-      # if Dir.current != @mark_dir
-        # marked_files_clear
-      # end
 
       # Don't allow the user to mark the empty directory list item.
       return if @empty
-      # return if @list[0] == "empty" && !@list[1]?
 
-        if index == -1 # -1 means "all"
-          marked_files_clear
-          if @sel.size != @list.size
-            @sel.mark @list
-          end
+      if index == -1 # -1 means "all"
+        marked_files_clear
+        if @sel.size != @list.size
+          @sel.mark @list
+        end
 
-          redraw
+        redraw
       else
         file = @list[index]
         @sel.toggle(file)
@@ -341,9 +327,9 @@ module Fff
       # Find the program to use.
       @file_program = case operation
                       when /[yY]/
-                        "cp -iR"
+                        "copy "
                       when /[mM]/
-                        "mv -i"
+                        "move "
                       when /[sS]/
                         "ln -s"
                         # These are 'fff' functions.
@@ -375,7 +361,7 @@ module Fff
         system("#{@fff_trash_command} #{file_as_string}")
 
       else
-        # this is for haiku
+        # this is for haiku UNTESTED
         if @fff_trash != "" && File.directory?(@fff_trash)
           begin
             FileUtils.mv files[0..-2], @fff_trash
@@ -390,6 +376,7 @@ module Fff
       end
     end
 
+    # open a file or directory.
     def open(file="/")
       if File.directory?(file)
         @search = false
@@ -397,6 +384,7 @@ module Fff
         @oldpwd = Dir.current
         Dir.cd file
         redraw true
+
       elsif File.file?(file)
         mime_type = get_mime_type file
         if mime_type.includes?("text") \
@@ -424,6 +412,7 @@ module Fff
     end # open
 
 
+    # process pressed key
     def handle_key(key)
       # @@log.debug "inside handle_key with #{key}"
       pwd = Dir.current
@@ -432,6 +421,7 @@ module Fff
       when "RIGHT", "l", "ENTER", "RETURN"
         # Open list item.
         open @list[@scroll]
+
       when "LEFT", "h", "BACKSPACE"
         # If a search was done, clear the results and open the current dir.
         if @search && @search_end_early != true
@@ -443,6 +433,7 @@ module Fff
           @oldpwd = pwd
           open dir
         end
+
       when "DOWN", "j"
         if @scroll < @list_total
           @scroll += 1
@@ -453,6 +444,7 @@ module Fff
           print_line @scroll
           status_line
         end
+
       when "UP", "k"
         # '\e[1L': Insert a line above the cursor.
         # '\e[A':  Move cursor up a line.
@@ -485,9 +477,20 @@ module Fff
         if @scroll != @list_total
           @scroll = @list_total
           redraw
-
         end
 
+      when "SPACE"
+        t = @scroll + @max_items
+        if @scroll == @list_total
+          @scroll = 0
+          redraw
+        elsif t <= @list_total
+          @scroll += @max_items
+          redraw
+        else
+          @scroll = @list_total
+          redraw
+        end
         # Show hidden files.
       when "."
         @match_hidden = !@match_hidden
@@ -545,7 +548,7 @@ module Fff
           # check write access in this dir TODO
 
           # clear_screen
-          @screen.reset_terminal
+          # @screen.reset_terminal
 
           system("stty echo")
           # what abuot escaping the files Shellwords ??? TODO FIXME
@@ -572,8 +575,6 @@ module Fff
 
           @screen.setup_terminal
           redraw true
-        else
-          @@log.debug " NO MARKED FILES "
         end # if
 
       when "c"
