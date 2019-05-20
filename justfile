@@ -12,12 +12,10 @@ run: build
 # build
 build:
   #!/usr/bin/env bash
-  SRC=src/fff.cr
-  TGT=./fff
-  if [[ $SRC -nt $TGT ]]; then
-    time crystal build src/fff.cr
+  if [[ -f makefile ]]; then
+    make
   else
-    echo Nothing to do. $TGT uptodate.
+    time crystal build src/fff.cr
   fi
 
 lint:
@@ -28,4 +26,4 @@ log:
 
 install:
   crystal build src/fff.cr --release
-  cp fff ~/bin
+  cp fff ~/bin/fffcr
