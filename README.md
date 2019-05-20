@@ -7,6 +7,7 @@ Features:
 - move between directories using arrow keys or h/l.
 - open files with right arrow.
 - select files and move or delete or yank
+- detailed listing (v key) (not present in fff)
 
 I have not ported everything.
 
@@ -32,6 +33,10 @@ The original `fff` program link: https://github.com/dylanaraps/fff
 ## Usage
 
 $  fff
+
+## Status
+
+Works.
 
 ## Development
 
