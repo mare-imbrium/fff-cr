@@ -39,6 +39,6 @@ class Directory
            else
              File.info(file_name, follow_symlinks: false)
            end
-    "%s %8d %s" % [stat.modification_time.to_local.to_s("%Y:%m:%d %H:%M") , stat.size, file_name]
+    "%s %8s %s" % [stat.modification_time.to_local.to_s("%Y:%m:%d %H:%M") , stat.size.humanize, file_name]
   end
 end
