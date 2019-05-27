@@ -5,7 +5,7 @@
 #       Author: j kepler  http://github.com/mare-imbrium/canis/
 #         Date: 2019-05-05
 #      License: MIT
-#  Last update: 2019-05-17 11:23
+#  Last update: 2019-05-27 12:08
 # ----------------------------------------------------------------------------- #
 # port of fff (bash)
 ## TODO:
@@ -210,10 +210,12 @@ module Fff
       # Remove all non-printable characters.
       file_name = File.basename(file)
       if @long_listing
-        details = Directory.format_long_list(file_name)
+        details = Directory.format_long_list(file_name, format)
+        # str = "%s %8s %s" % details
+        # TODO: 2019-05-27 - color size and date based on value
         file_name = file_name.gsub(/[^[:print:]]/, "?")
         printf("\r%s%s\e[m\r", \
-               "#{@file_pre}#{format}", \
+               "#{@file_pre}", \
                "#{details}#{suffix}#{@file_post}")
       else
         file_name = file_name.gsub(/[^[:print:]]/, "?")
